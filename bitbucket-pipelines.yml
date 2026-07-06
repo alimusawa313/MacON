@@ -1,0 +1,52 @@
+# bitbucket-pipelines.yml
+#
+# Move this file to the ROOT of your Bitbucket repository (next to .git).
+# Steps tagged `self.hosted` + `macos` run on YOUR Mac via the MacON runner app;
+# anything without those labels still runs on Bitbucket's cloud.
+
+definitions:
+  # Reusable "clean the machine" fragment. Cleaning *inside the job*, after the
+  # build, is the safest possible time to do it — the build is already finished.
+  scripts:
+    - &cleanup >-
+      rm -rf ~/Library/Developer/Xcode/DerivedData/* || true;
+      rm -rf ~/Library/Caches/org.swift.swiftpm || true;
+      xcrun simctl delete unavailable || true
+
+pipelines:
+  default:
+    - step:
+        name: Build & Test (on my Mac)
+        runs-on:
+          - self.hosted
+          - macos
+        max-time: 60
+        script:
+          - xcodebuild -version
+          - >-
+            xcodebuild
+            -project MacON/MacON.xcodeproj
+            -scheme MacON
+            -destination 'platform=macOS'
+            clean test
+        after-script:
+          # Runs even if the build fails, so the Mac never fills up with caches.
+          - *cleanup
+
+  # Only build on pull requests targeting main, as an example of triggering.
+  pull-requests:
+    '**':
+      - step:
+          name: PR Build (on my Mac)
+          runs-on:
+            - self.hosted
+            - macos
+          script:
+            - >-
+              xcodebuild
+              -project MacON/MacON.xcodeproj
+              -scheme MacON
+              -destination 'platform=macOS'
+              clean build
+          after-script:
+            - *cleanup
