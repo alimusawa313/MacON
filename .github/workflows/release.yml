@@ -65,6 +65,8 @@ jobs:
             depends_on :macos
 
             def install
+              inreplace "MaconKit/Sources/MaconKit/Version.swift",
+                        /maconVersion = "[^"]*"/, "maconVersion = \"#{version}\""
               system "swift", "build", "--disable-sandbox", "-c", "release", "--package-path", "MaconKit"
               bin.install "MaconKit/.build/release/macon"
             end
