@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import MaconKit
 
 struct SettingsView: View {
     @EnvironmentObject private var pool: RunnerPool

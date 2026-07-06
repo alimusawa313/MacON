@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import MaconKit
 
 struct PipelineDetailView: View {
     @ObservedObject var pipeline: PipelineRunner
@@ -42,7 +43,7 @@ struct PipelineDetailView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Dot(color: pipeline.buildState.color, glow: pipeline.isWatching)
+            Dot(color: pipeline.buildState.uiColor, glow: pipeline.isWatching)
             VStack(alignment: .leading, spacing: 2) {
                 Text(pipeline.config.name).font(.headline)
                 Text(pipeline.buildState.label)
@@ -74,7 +75,7 @@ struct PipelineDetailView: View {
                     selectedRun = nil
                 } label: {
                     HStack(spacing: 8) {
-                        Dot(color: pipeline.isBuilding ? .yellow : pipeline.buildState.color,
+                        Dot(color: pipeline.isBuilding ? .yellow : pipeline.buildState.uiColor,
                             glow: pipeline.isBuilding)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Live").font(.callout).bold()
@@ -103,7 +104,7 @@ struct PipelineDetailView: View {
 
     private func runRow(_ run: RunSummary) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: run.result.icon).foregroundStyle(run.result.color)
+            Image(systemName: run.result.icon).foregroundStyle(run.result.uiColor)
             VStack(alignment: .leading, spacing: 1) {
                 Text(run.shaShort).font(.system(.callout, design: .monospaced))
                 Text("\(run.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(run.durationText)")

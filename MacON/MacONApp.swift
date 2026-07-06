@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import MaconKit
 
 @main
 struct MacONApp: App {

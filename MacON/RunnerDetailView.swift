@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import MaconKit
 
 struct RunnerDetailView: View {
     @ObservedObject var agent: RunnerAgent

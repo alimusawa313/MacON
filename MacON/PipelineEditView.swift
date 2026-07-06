@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import MaconKit
 
 struct SecretRow: Identifiable {
     let id = UUID()

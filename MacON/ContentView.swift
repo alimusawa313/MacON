@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import MaconKit
 
 enum SidebarSelection: Hashable {
     case runner(UUID)
@@ -102,7 +103,7 @@ private struct PipelineRow: View {
     @ObservedObject var pipeline: PipelineRunner
     var body: some View {
         HStack(spacing: 10) {
-            Dot(color: pipeline.buildState.color, glow: pipeline.isWatching)
+            Dot(color: pipeline.buildState.uiColor, glow: pipeline.isWatching)
             VStack(alignment: .leading, spacing: 1) {
                 Text(pipeline.config.name).lineLimit(1)
                 Text(pipeline.isWatching ? "Watching \(pipeline.config.branch)" : pipeline.buildState.label)

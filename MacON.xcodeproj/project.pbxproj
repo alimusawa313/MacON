@@ -47,11 +47,16 @@
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
+/* Begin PBXBuildFile section */
+		MK00000000000000000000A3 /* MaconKit in Frameworks */ = {isa = PBXBuildFile; productRef = MK00000000000000000000A2 /* MaconKit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		0381F4A32FF7587900DC4EEE /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				MK00000000000000000000A3 /* MaconKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = MacON;
 			packageProductDependencies = (
+				MK00000000000000000000A2 /* MaconKit */,
 			);
 			productName = MacON;
 			productReference = 0381F4A62FF7587900DC4EEE /* MacON.app */;
@@ -196,6 +202,9 @@
 			mainGroup = 0381F49D2FF7587900DC4EEE;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				MK00000000000000000000A1 /* XCLocalSwiftPackageReference "MaconKit" */,
+			);
 			productRefGroup = 0381F4A72FF7587900DC4EEE /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -206,6 +215,20 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		MK00000000000000000000A1 /* XCLocalSwiftPackageReference "MaconKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = MaconKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		MK00000000000000000000A2 /* MaconKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MaconKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXResourcesBuildPhase section */
 		0381F4A42FF7587900DC4EEE /* Resources */ = {

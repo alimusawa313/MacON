@@ -2,19 +2,47 @@
 //  Components.swift
 //  MacON
 //
-//  Reusable UI pieces.
+//  Reusable SwiftUI pieces. Log-processing logic lives in MaconKit.
 //
 
 import SwiftUI
+import MaconKit
 
-extension String {
-    /// Remove ANSI colour escape codes (fastlane/xcpretty emit lots of these).
-    func strippingANSI() -> String {
-        guard let re = try? NSRegularExpression(pattern: "\u{1B}\\[[0-9;]*m") else { return self }
-        let range = NSRange(startIndex..., in: self)
-        return re.stringByReplacingMatches(in: self, range: range, withTemplate: "")
+// MARK: - UI colour mappings for core enums
+
+extension RunnerState {
+    var uiColor: Color {
+        switch self {
+        case .running:  return .green
+        case .starting: return .yellow
+        case .stopped:  return .gray
+        case .crashed:  return .red
+        }
     }
 }
+
+extension BuildState {
+    var uiColor: Color {
+        switch self {
+        case .idle:      return .gray
+        case .running:   return .yellow
+        case .succeeded: return .green
+        case .failed:    return .red
+        }
+    }
+}
+
+extension RunResult {
+    var uiColor: Color {
+        switch self {
+        case .succeeded: return .green
+        case .failed:    return .red
+        case .cancelled: return .orange
+        }
+    }
+}
+
+// MARK: - Status dot
 
 /// Generic coloured status indicator.
 struct Dot: View {
@@ -31,16 +59,10 @@ struct Dot: View {
 
 struct StatusDot: View {
     let state: RunnerState
-    var body: some View { Dot(color: color, glow: state.isActive) }
-    private var color: Color {
-        switch state {
-        case .running:  return .green
-        case .starting: return .yellow
-        case .stopped:  return .gray
-        case .crashed:  return .red
-        }
-    }
+    var body: some View { Dot(color: state.uiColor, glow: state.isActive) }
 }
+
+// MARK: - Live log console
 
 struct LogConsole: View {
     let lines: [LogLine]
@@ -84,21 +106,6 @@ struct LogConsole: View {
     }
 }
 
-/// Human-friendly duration.
-func formatDuration(_ t: TimeInterval) -> String {
-    let t = max(0, t)
-    if t < 1 { return String(format: "%.0fms", t * 1000) }
-    if t < 60 { return String(format: "%.1fs", t) }
-    let s = Int(t.rounded())
-    return "\(s / 60)m \(s % 60)s"
-}
-
-/// Total wall time spanned by a set of log lines.
-func totalDuration(_ lines: [LogLine]) -> TimeInterval {
-    guard let first = lines.first?.date, let last = lines.last?.date else { return 0 }
-    return last.timeIntervalSince(first)
-}
-
 // MARK: - Raw log (for history + pipelines)
 
 struct RawStringLog: View {
@@ -128,77 +135,6 @@ struct RawStringLog: View {
 }
 
 // MARK: - Structured "Steps" view (Bitrise-style collapsible sections)
-
-struct LogSection: Identifiable {
-    enum Kind { case command, step, phase, output }
-    let id: Int
-    var title: String
-    var lines: [LogLine]
-    var kind: Kind
-    var startDate: Date
-    var endDate: Date
-
-    var duration: TimeInterval { max(0, endDate.timeIntervalSince(startDate)) }
-
-    // Precise failure detection — avoids false positives like the fastlane
-    // setting line "slack_only_on_failure | false".
-    var failed: Bool {
-        lines.contains { l0 in
-            let l = l0.text
-            if l.contains("❌") { return true }
-            if l.contains("** BUILD FAILED") || l.contains("** TEST FAILED")
-                || l.contains("TEST EXECUTE FAILED") || l.contains("fatal error:") { return true }
-            return l.range(of: #"with [1-9][0-9]* failure"#, options: .regularExpression) != nil
-        }
-    }
-    var succeeded: Bool {
-        lines.contains {
-            let l = $0.text
-            return l.contains("✅") || l.contains("** BUILD SUCCEEDED")
-                || l.contains("Build Succeeded") || l.contains("with 0 failures")
-                || l.contains("Tests Passed")
-        }
-    }
-}
-
-/// Parse a flat log into collapsible sections keyed off command / fastlane-step markers.
-func parseLogSections(_ lines: [LogLine]) -> [LogSection] {
-    var sections: [LogSection] = []
-    var current: LogSection?
-
-    func flush() { if let c = current { sections.append(c) }; current = nil }
-    func start(_ title: String, _ kind: LogSection.Kind, _ date: Date) {
-        flush()
-        current = LogSection(id: sections.count, title: title, lines: [],
-                             kind: kind, startDate: date, endDate: date)
-    }
-
-    for line in lines {
-        let t = line.text.strippingANSI()
-        if t.hasPrefix("──────") {
-            let name = t.replacingOccurrences(of: "─", with: "").trimmingCharacters(in: .whitespaces)
-            start(name.isEmpty ? "Build" : name.capitalized, .phase, line.date)
-        } else if t.hasPrefix("$ ") {
-            start(String(t.dropFirst(2)), .command, line.date)
-        } else if let r = t.range(of: "--- Step: ") {
-            let name = t[r.upperBound...].replacingOccurrences(of: "---", with: "")
-                .trimmingCharacters(in: .whitespaces)
-            start(name, .step, line.date)
-        } else {
-            if current == nil { start("Output", .output, line.date) }
-            current?.lines.append(line)
-        }
-    }
-    flush()
-
-    // A step's duration runs until the next step starts (last step → final line).
-    let lastDate = lines.last?.date
-    for i in sections.indices {
-        sections[i].endDate = (i + 1 < sections.count) ? sections[i + 1].startDate
-                                                        : (lastDate ?? sections[i].startDate)
-    }
-    return sections
-}
 
 struct StructuredLog: View {
     let lines: [LogLine]
