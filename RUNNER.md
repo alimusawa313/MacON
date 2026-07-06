@@ -6,6 +6,20 @@ polling its own repo. When a teammate's pipeline runs a step tagged
 `self.hosted` + `macos`, it executes here on your Mac. Like Bitrise, but local and
 shared. MacON also cleans up build caches so the Mac doesn't fill up.
 
+## Two front-ends, one core
+
+The project is one repo with a shared core (`MaconKit`) and two front-ends:
+
+- **MacON.app** — the SwiftUI menu-bar app described here (runner pool + local pipelines).
+- **`macon`** — a terminal CLI on the same core. Runs a repo's `macon.yml` anywhere
+  (git hook, cron, another CI), streaming output and exiting non-zero on failure:
+  ```sh
+  macon run [--workflow beta] [path]     # run a workflow in a checked-out repo
+  macon lint macon.yml                   # inspect a pipeline
+  ```
+  Install it: `cd MaconKit && make install`, or via Homebrew once published
+  (`brew install you/macon/macon`). See [MaconKit/README.md](MaconKit/README.md).
+
 ## How sharing works (important)
 
 Bitbucket runners **poll outward**: the agent connects *from* your Mac *to*

@@ -51,6 +51,13 @@
     "swift-dependencies": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/Models.swiftdeps",
     "diagnostics": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/Models.dia"
   },
+  "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/Sources/MaconKit/PipelineExecutor.swift": {
+    "dependencies": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/PipelineExecutor.d",
+    "object": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/PipelineExecutor.swift.o",
+    "swiftmodule": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/PipelineExecutor~partial.swiftmodule",
+    "swift-dependencies": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/PipelineExecutor.swiftdeps",
+    "diagnostics": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/PipelineExecutor.dia"
+  },
   "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/Sources/MaconKit/PipelineModels.swift": {
     "dependencies": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/PipelineModels.d",
     "object": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/PipelineModels.swift.o",
@@ -92,6 +99,13 @@
     "swiftmodule": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/RunnerPool~partial.swiftmodule",
     "swift-dependencies": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/RunnerPool.swiftdeps",
     "diagnostics": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/RunnerPool.dia"
+  },
+  "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/Sources/MaconKit/Shell.swift": {
+    "dependencies": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/Shell.d",
+    "object": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/Shell.swift.o",
+    "swiftmodule": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/Shell~partial.swiftmodule",
+    "swift-dependencies": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/Shell.swiftdeps",
+    "diagnostics": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/Shell.dia"
   },
   "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/Sources/MaconKit/Version.swift": {
     "dependencies": "/Users/alihaidar/Kuliah/Apple DevOps/Challenge3/MacON/MaconKit/.build/arm64-apple-macosx/debug/MaconKit.build/Version.d",
