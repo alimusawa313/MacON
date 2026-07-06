@@ -30,8 +30,12 @@ jobs:
       - name: Compute tarball URL + sha256
         id: meta
         run: |
+          set -euo pipefail
           URL="https://github.com/${{ github.repository }}/archive/refs/tags/${{ github.ref_name }}.tar.gz"
-          SHA=$(curl -fsSL "$URL" | sha256sum | awk '{print $1}')
+          # Download to a file so a 404 / empty response fails the job (a pipe hides it).
+          curl -fSL "$URL" -o source.tar.gz
+          test -s source.tar.gz
+          SHA=$(sha256sum source.tar.gz | awk '{print $1}')
           {
             echo "url=$URL"
             echo "sha=$SHA"
