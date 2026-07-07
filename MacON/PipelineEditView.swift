@@ -31,11 +31,16 @@ struct PipelineEditView: View {
                 }
 
                 Section("Repository") {
-                    if pool.credentials.isComplete {
+                    Picker("Provider", selection: $pipeline.config.provider) {
+                        ForEach(GitProviderKind.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if pool.hasCredentials(for: pipeline.config.provider) {
                         repoControls
                     } else {
-                        Text("⚠︎ Set your Bitbucket account in Settings to load repos "
-                             + "and branches. Until then, enter values manually:")
+                        Text("⚠︎ Set your \(pipeline.config.provider.label) credentials in "
+                             + "Settings to load repos and branches. Until then, enter values manually:")
                             .font(.caption).foregroundStyle(.orange)
                         manualFields
                     }
@@ -180,6 +185,10 @@ struct PipelineEditView: View {
             pipeline.config.branch = ""
             Task { await reloadBranches() }
         }
+        .onChange(of: pipeline.config.provider) {
+            repos = []; branches = []; loadError = nil
+            Task { await reloadAll() }
+        }
     }
 
     private var webhookHelp: String {
@@ -196,9 +205,9 @@ struct PipelineEditView: View {
         Group {
             // Workspace: free text. Atlassian deprecated listing all workspaces
             // (CHANGE-2770), so you type the slug (e.g. "academytools").
-            LabeledContent("Workspace") {
+            LabeledContent(pipeline.config.provider.ownerLabel) {
                 HStack {
-                    TextField("workspace-slug", text: $pipeline.config.workspace)
+                    TextField(pipeline.config.provider.ownerPlaceholder, text: $pipeline.config.workspace)
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                         .onSubmit { Task { await reloadRepos(clearing: true) } }
@@ -274,7 +283,7 @@ struct PipelineEditView: View {
 
     private func reloadRepos(clearing: Bool) async {
         if clearing { pipeline.config.repoSlug = ""; pipeline.config.branch = "" }
-        guard let client = pool.makeClient(),
+        guard let client = pool.makeClient(for: pipeline.config.provider),
               !pipeline.config.workspace.isEmpty else { repos = []; return }
         loading = true; loadError = nil
         do {
@@ -288,7 +297,7 @@ struct PipelineEditView: View {
     }
 
     private func reloadBranches() async {
-        guard let client = pool.makeClient(),
+        guard let client = pool.makeClient(for: pipeline.config.provider),
               !pipeline.config.workspace.isEmpty,
               !pipeline.config.repoSlug.isEmpty else { branches = []; return }
         do {

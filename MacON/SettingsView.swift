@@ -17,7 +17,7 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                Section("Bitbucket account (for Local Pipelines)") {
+                Section("Bitbucket account (for Bitbucket pipelines)") {
                     Text("Used to poll for commits, clone over HTTPS, and post build "
                          + "status. Create an API token in Atlassian account settings.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -28,6 +28,18 @@ struct SettingsView: View {
                           systemImage: pipelines.credentials.isComplete ? "checkmark.seal" : "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(pipelines.credentials.isComplete ? .green : .orange)
+                }
+
+                Section("GitHub account (for GitHub pipelines)") {
+                    Text("A Personal Access Token with repo access (classic: `repo` scope, "
+                         + "or fine-grained: Contents + Commit statuses + Pull requests). "
+                         + "Create one at github.com → Settings → Developer settings.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    SecureField("Personal Access Token", text: $pipelines.githubToken)
+                    Label(pipelines.hasCredentials(for: .github) ? "Token set" : "Not set",
+                          systemImage: pipelines.hasCredentials(for: .github) ? "checkmark.seal" : "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(pipelines.hasCredentials(for: .github) ? .green : .orange)
                 }
 
                 Section("Global secrets (env for all pipelines)") {
