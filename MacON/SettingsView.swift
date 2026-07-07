@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 import MaconKit
 
 struct SettingsView: View {
@@ -13,6 +14,7 @@ struct SettingsView: View {
     @EnvironmentObject private var pipelines: PipelinePool
     @Environment(\.dismiss) private var dismiss
     @State private var secretRows: [SecretRow] = []
+    @State private var exportWithSecrets = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,6 +64,31 @@ struct SettingsView: View {
                     }
                     Button { secretRows.append(SecretRow(key: "", value: "")) } label: {
                         Label("Add secret", systemImage: "plus")
+                    }
+                }
+
+                Section("Portable config (use in the terminal)") {
+                    Text("Export your pipelines to a JSON file, then run them headless "
+                         + "with `macon watch --config <file>`. See what's inside with "
+                         + "`macon pipelines <file>`.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Include secrets & tokens in the file", isOn: $exportWithSecrets)
+                    if exportWithSecrets {
+                        Label("The file will contain your API tokens and secret values "
+                              + "in plain text — keep it private.", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    } else {
+                        Text("Config only. Secret names are included; provide their values "
+                             + "via the shell environment when you run macon.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button { exportConfig() } label: {
+                            Label("Export Configuration…", systemImage: "square.and.arrow.up")
+                        }
+                        Button { importConfig() } label: {
+                            Label("Import…", systemImage: "square.and.arrow.down")
+                        }
                     }
                 }
 
@@ -120,5 +147,31 @@ struct SettingsView: View {
                 SecretRow(key: $0, value: Keychain.get(account: PipelinePool.globalSecretAccount($0)))
             }
         }
+    }
+
+    // MARK: - Export / Import
+
+    private func exportConfig() {
+        // Commit any unsaved global-secret edits first so they're included.
+        pipelines.setGlobalSecrets(secretRows.map { ($0.key, $0.value) })
+        let bundle = pipelines.makeExport(includeSecrets: exportWithSecrets)
+        guard let data = try? bundle.encoded() else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "macon-export.json"
+        panel.allowedContentTypes = [.json]
+        if panel.runModal() == .OK, let url = panel.url {
+            try? data.write(to: url)
+        }
+    }
+
+    private func importConfig() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? Data(contentsOf: url),
+              let bundle = try? MaconExport.decoded(from: data) else { return }
+        pipelines.importBundle(bundle, replaceExisting: false)
     }
 }
