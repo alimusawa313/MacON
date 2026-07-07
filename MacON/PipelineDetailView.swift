@@ -52,9 +52,17 @@ struct PipelineDetailView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("\(pipeline.config.workspace)/\(pipeline.config.repoSlug) @ \(pipeline.config.branch)")
                     .font(.caption).foregroundStyle(.secondary)
-                if pipeline.isWatching, let p = pipeline.lastPoll {
-                    Text("watching · last poll \(p.formatted(date: .omitted, time: .standard))")
-                        .font(.caption2).foregroundStyle(.secondary)
+                if pipeline.isWatching {
+                    let mode = pipeline.config.triggerMode == .webhook
+                        ? "webhook :\(pipeline.config.webhookPort)" : "polling"
+                    if let p = pipeline.lastPoll {
+                        let verb = pipeline.config.triggerMode == .webhook ? "last event" : "last poll"
+                        Text("watching (\(mode)) · \(verb) \(p.formatted(date: .omitted, time: .standard))")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else {
+                        Text("watching (\(mode))")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.leading, 6)

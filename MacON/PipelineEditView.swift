@@ -141,8 +141,25 @@ struct PipelineEditView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
 
-                    Stepper("Poll every \(pipeline.config.pollSeconds)s",
-                            value: $pipeline.config.pollSeconds, in: 5...3600, step: 5)
+                    Picker("How", selection: $pipeline.config.triggerMode) {
+                        ForEach(TriggerMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if pipeline.config.triggerMode == .polling {
+                        Stepper("Poll every \(pipeline.config.pollSeconds)s",
+                                value: $pipeline.config.pollSeconds, in: 5...3600, step: 5)
+                        Text("Asks Bitbucket on a timer. Simple and works anywhere; up to "
+                             + "\(pipeline.config.pollSeconds)s between a commit and the build.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        LabeledContent("Listen on port") {
+                            TextField("8787", value: $pipeline.config.webhookPort, format: .number)
+                                .textFieldStyle(.roundedBorder).frame(width: 90)
+                        }
+                        Text(webhookHelp).font(.caption).foregroundStyle(.secondary)
+                    }
+
                     Toggle("Post build status to Bitbucket commits",
                            isOn: $pipeline.config.postStatus)
                 }
@@ -163,6 +180,14 @@ struct PipelineEditView: View {
             pipeline.config.branch = ""
             Task { await reloadBranches() }
         }
+    }
+
+    private var webhookHelp: String {
+        let events = pipeline.config.watchMode == .pullRequests ? "Push and Pull Request" : "Push"
+        return "Builds the instant Bitbucket calls us — no lag, no idle polling. In the "
+            + "repo's Settings → Webhooks, add a hook to "
+            + "http://<this-mac>:\(pipeline.config.webhookPort)/ for \(events) events. "
+            + "The Mac must be reachable at that URL (same LAN, or a tunnel like cloudflared/ngrok)."
     }
 
     // MARK: - Controls
