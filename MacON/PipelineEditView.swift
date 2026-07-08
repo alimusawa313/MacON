@@ -69,8 +69,11 @@ struct PipelineEditView: View {
                       test:
                         before_run: [_setup]
                         steps:
-                          - name: Test
-                            script: bundle exec fastlane test device:"$TEST_DEVICE"
+                          - name: UI Tests
+                            matrix:
+                              device: ["iPhone 16", "iPad Air"]
+                              os: ["17.5", "18.2"]
+                            script: bundle exec fastlane test device:"$MACON_MATRIX_DEVICE" os:"$MACON_MATRIX_OS"
                       beta:
                         before_run: [test]
                         steps:
