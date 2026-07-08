@@ -17,6 +17,7 @@ enum SidebarSelection: Hashable {
 struct ContentView: View {
     @EnvironmentObject private var pool: RunnerPool
     @EnvironmentObject private var pipelines: PipelinePool
+    @EnvironmentObject private var companion: CompanionManager
     @State private var selection: SidebarSelection?
     @State private var showSettings = false
 
@@ -52,7 +53,7 @@ struct ContentView: View {
         }
         .navigationTitle("MacON")
         .sheet(isPresented: $showSettings) {
-            SettingsView().environmentObject(pool).environmentObject(pipelines)
+            SettingsView().environmentObject(pool).environmentObject(pipelines).environmentObject(companion)
         }
         .task { await pool.refreshReclaimable() }
     }
@@ -132,4 +133,5 @@ private struct RunnerRow: View {
     ContentView()
         .environmentObject(RunnerPool())
         .environmentObject(PipelinePool())
+        .environmentObject(CompanionManager())
 }

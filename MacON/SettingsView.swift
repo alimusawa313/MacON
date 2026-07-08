@@ -12,9 +12,11 @@ import MaconKit
 struct SettingsView: View {
     @EnvironmentObject private var pool: RunnerPool
     @EnvironmentObject private var pipelines: PipelinePool
+    @EnvironmentObject private var companion: CompanionManager
     @Environment(\.dismiss) private var dismiss
     @State private var secretRows: [SecretRow] = []
     @State private var exportWithSecrets = false
+    @State private var showPairing = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,6 +94,40 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Companion app (iPhone & iPad)") {
+                    Text("Monitor builds and tail logs from your phone or iPad on the "
+                         + "same network. Pair once; it reconnects on its own.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Serve the companion app", isOn: Binding(
+                        get: { companion.isRunning },
+                        set: { on in
+                            if on {
+                                companion.start(runnerName: ProcessInfo.processInfo.hostName,
+                                                runners: { pipelines.pipelines })
+                            } else {
+                                companion.stop()
+                            }
+                        }))
+                    HStack {
+                        Text("Port")
+                        Spacer()
+                        TextField("8899", value: $companion.port, format: .number.grouping(.never))
+                            .frame(width: 80).multilineTextAlignment(.trailing)
+                            .disabled(companion.isRunning)
+                    }
+                    if companion.isRunning {
+                        Label("Listening on \(companion.address)", systemImage: "dot.radiowaves.left.and.right")
+                            .font(.caption).foregroundStyle(.green)
+                        Button { showPairing = true } label: {
+                            Label("Pair a device…", systemImage: "qrcode")
+                        }
+                        if !companion.devices.isEmpty {
+                            Text("\(companion.devices.count) paired device(s)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section("Per-runner cleanup (on stop)") {
                     Toggle("Empty the runner's working directory when it stops",
                            isOn: $pool.cleanupSettings.emptyWorkingDirOnStop)
@@ -141,6 +177,7 @@ struct SettingsView: View {
             .padding()
         }
         .frame(width: 540, height: 680)
+        .sheet(isPresented: $showPairing) { CompanionPairingView() }
         .task {
             await pool.refreshReclaimable()
             secretRows = pipelines.globalSecretKeys.map {

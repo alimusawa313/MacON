@@ -13,12 +13,21 @@ import MaconKit
 struct MacONApp: App {
     @StateObject private var pool = RunnerPool()
     @StateObject private var pipelines = PipelinePool()
+    @StateObject private var companion = CompanionManager()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(pool)
                 .environmentObject(pipelines)
+                .environmentObject(companion)
+                .task {
+                    // Bring the companion server back up if it was on last time.
+                    if companion.startsAtLaunch && !companion.isRunning {
+                        companion.start(runnerName: ProcessInfo.processInfo.hostName,
+                                        runners: { pipelines.pipelines })
+                    }
+                }
         }
 
         // Quick control from the menu bar.
