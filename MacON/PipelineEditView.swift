@@ -162,10 +162,22 @@ struct PipelineEditView: View {
                             TextField("8787", value: $pipeline.config.webhookPort, format: .number)
                                 .textFieldStyle(.roundedBorder).frame(width: 90)
                         }
+                        LabeledContent("Secret (recommended)") {
+                            SecureField("blank = accept any POST", text: $pipeline.config.webhookSecret)
+                                .textFieldStyle(.roundedBorder)
+                        }
                         Text(webhookHelp).font(.caption).foregroundStyle(.secondary)
                     }
 
-                    Toggle("Post build status to Bitbucket commits",
+                    Stepper(pipeline.config.buildTimeoutSeconds == 0
+                            ? "Build timeout: none"
+                            : "Build timeout: \(pipeline.config.buildTimeoutSeconds / 60) min",
+                            value: $pipeline.config.buildTimeoutSeconds, in: 0...7200, step: 300)
+                    Text("Cancel a build that runs longer than this. Keeps a hung build "
+                         + "from wedging an unattended runner.")
+                        .font(.caption).foregroundStyle(.secondary)
+
+                    Toggle("Post build status to commits",
                            isOn: $pipeline.config.postStatus)
                 }
             }
