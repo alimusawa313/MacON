@@ -132,6 +132,14 @@ struct SettingsView: View {
                              + "time a device opens the screen view.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
+                    Toggle("Let paired devices control this Mac (cursor & keyboard)",
+                           isOn: $companion.allowControl)
+                    if companion.allowControl {
+                        Label("Grant Accessibility permission (System Settings → Privacy & "
+                              + "Security → Accessibility) so MacOn can move the cursor and type.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 }
 
                 Section("Per-runner cleanup (on stop)") {

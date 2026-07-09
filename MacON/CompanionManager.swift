@@ -25,19 +25,29 @@ final class CompanionManager: ObservableObject {
             if !shareScreen { setScreenCapture(false) }
         }
     }
+    /// Whether paired devices may control this Mac (cursor + keyboard).
+    @Published var allowControl: Bool {
+        didSet {
+            defaults.set(allowControl, forKey: controlKey)
+            if allowControl { remote.requestPermission() }
+        }
+    }
 
     private var service: CompanionService?
     private let store = PairingStore()
     private let broadcaster = ScreenBroadcaster()
     private var streamer: ScreenStreamer?
+    private let remote = RemoteControl()
     private let defaults = UserDefaults.standard
     private let enabledKey = "companion.enabled"
     private let portKey = "companion.port"
     private let screenKey = "companion.shareScreen"
+    private let controlKey = "companion.allowControl"
 
     init() {
         port = defaults.object(forKey: portKey) as? Int ?? 8899
         shareScreen = defaults.object(forKey: screenKey) as? Bool ?? true
+        allowControl = defaults.bool(forKey: controlKey)   // default off (sensitive)
         devices = store.deviceList()
 
         // Demand-driven capture: run only while a device is viewing.
@@ -70,6 +80,12 @@ final class CompanionManager: ObservableObject {
             runners: runners, runnerName: runnerName,
             port: UInt16(clamping: port), store: store,
             screen: broadcaster,
+            control: { [weak self] event in
+                Task { @MainActor in
+                    guard let self, self.allowControl else { return }
+                    self.remote.handle(event)
+                }
+            },
             onLog: { _ in })
         svc.start()
         service = svc
