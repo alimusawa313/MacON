@@ -20,7 +20,11 @@ struct CompanionPairingView: View {
         VStack(spacing: 18) {
             Text("Pair a device").font(.title2.bold())
 
-            if let code = companion.pairingCode {
+            if !companion.isRunning {
+                ContentUnavailableView("Server is off",
+                                       systemImage: "wifi.slash",
+                                       description: Text("Turn on the companion app in Settings first."))
+            } else if let code = companion.pairingCode {
                 if let qr = Self.qrImage(companion.pairingURL ?? code) {
                     Image(nsImage: qr)
                         .interpolation(.none)
@@ -35,7 +39,7 @@ struct CompanionPairingView: View {
                     labeled("Code", code, mono: true)
                 }
 
-                Text("In the MacOn app on your iPhone or iPad: tap **Add runner**, then enter the address and code. Same Wi‑Fi as this Mac. (QR scanning is coming to the app.)")
+                Text("In the MacOn app on your iPhone or iPad: tap **Add runner**, then enter the address and code. Same Wi‑Fi as this Mac.")
                     .font(.caption).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -43,9 +47,18 @@ struct CompanionPairingView: View {
                 Button("Generate a new code") { companion.newCode() }
                     .buttonStyle(.link)
             } else {
-                ContentUnavailableView("Server is off",
-                                       systemImage: "wifi.slash",
-                                       description: Text("Turn on the companion app in Settings first."))
+                // Server is up and no code is active (e.g. a device is already
+                // paired). Offer to mint one to add another device.
+                VStack(spacing: 12) {
+                    Image(systemName: "plus.circle").font(.system(size: 40)).foregroundStyle(.blue)
+                    Text("Add another device").font(.headline)
+                    Text("Listening on \(companion.address).")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Create a pairing code") { companion.newCode() }
+                        .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
             }
 
             if !companion.devices.isEmpty {
