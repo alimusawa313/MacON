@@ -83,8 +83,12 @@ final class CompanionManager: ObservableObject {
             control: { [weak self] event in
                 Task { @MainActor in
                     guard let self else { return }
-                    if event.t == "fps" {                       // stream setting — always allowed
+                    if event.t == "fps" {                       // stream settings — always allowed
                         if let f = event.code { self.setStreamFPS(f) }
+                        return
+                    }
+                    if event.t == "res" {
+                        if let w = event.code { self.setStreamMaxWidth(w) }
                         return
                     }
                     guard self.allowControl else { return }
@@ -112,7 +116,8 @@ final class CompanionManager: ObservableObject {
     func setScreenCapture(_ active: Bool) {
         if active && shareScreen {
             guard streamer == nil else { return }
-            let s = ScreenStreamer(fps: streamFPS, publish: { [broadcaster] packet in broadcaster.publish(packet) })
+            let s = ScreenStreamer(fps: streamFPS, maxWidth: streamMaxWidth,
+                                   publish: { [broadcaster] packet in broadcaster.publish(packet) })
             s.start()
             streamer = s
         } else {
@@ -127,6 +132,13 @@ final class CompanionManager: ObservableObject {
         let clamped = [30, 60, 120].contains(fps) ? fps : 60
         streamFPS = clamped
         streamer?.setFrameRate(clamped)
+    }
+
+    /// Requested capture width cap (persists; applies live if capturing).
+    private(set) var streamMaxWidth: Int = 2560
+    func setStreamMaxWidth(_ width: Int) {
+        streamMaxWidth = max(640, min(4096, width))
+        streamer?.setMaxWidth(streamMaxWidth)
     }
 
     // MARK: Pairing

@@ -30,15 +30,16 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private var stream: SCStream?
     private var session: VTCompressionSession?
 
-    private let maxWidth = 2560                 // cap on the captured native-pixel width
+    private var maxWidth: Int                   // cap on the captured native-pixel width
     private var fps: Int                        // target frame rate (30 / 60 / 120)
     private var config: SCStreamConfiguration?  // kept so fps can be changed live
 
     private let keyframeLock = NSLock()
     private var pendingKeyframe = true         // first frame is always a keyframe
 
-    init(fps: Int = 60, publish: @escaping @Sendable (Data) -> Void) {
+    init(fps: Int = 60, maxWidth: Int = 2560, publish: @escaping @Sendable (Data) -> Void) {
         self.fps = fps
+        self.maxWidth = maxWidth
         self.publish = publish
     }
 
@@ -52,6 +53,19 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(newFPS))
             stream.updateConfiguration(config) { _ in }
         }
+    }
+
+    /// Change the capture resolution cap — restarts capture at the new size
+    /// (the encoder's dimensions are fixed at creation, so it must be rebuilt).
+    func setMaxWidth(_ newWidth: Int) {
+        guard newWidth != maxWidth else { return }
+        maxWidth = newWidth
+        let old = stream
+        stream = nil; config = nil
+        Task { try? await old?.stopCapture() }
+        if let session { VTCompressionSessionInvalidate(session); self.session = nil }
+        pendingKeyframe = true
+        Task { await begin() }
     }
 
     func start() { Task { await begin() } }
