@@ -25,12 +25,13 @@ struct PipelineEditView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            header
             Form {
-                Section("Pipeline") {
+                Section {
                     TextField("Name", text: $pipeline.config.name)
-                }
+                } header: { FormSectionHeader(title: "Pipeline", systemImage: "bolt.horizontal.fill", tint: Brand.blue) }
 
-                Section("Repository") {
+                Section {
                     Picker("Provider", selection: $pipeline.config.provider) {
                         ForEach(GitProviderKind.allCases, id: \.self) { Text($0.label).tag($0) }
                     }
@@ -39,14 +40,15 @@ struct PipelineEditView: View {
                     if pool.hasCredentials(for: pipeline.config.provider) {
                         repoControls
                     } else {
-                        Text("⚠︎ Set your \(pipeline.config.provider.label) credentials in "
-                             + "Settings to load repos and branches. Until then, enter values manually:")
-                            .font(.caption).foregroundStyle(.orange)
+                        Label("Set your \(pipeline.config.provider.label) credentials in Settings to "
+                              + "load repos and branches. Until then, enter values manually:",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(Brand.amber)
                         manualFields
                     }
-                }
+                } header: { FormSectionHeader(title: "Repository", systemImage: "arrow.triangle.branch", tint: Brand.indigo) }
 
-                Section("Build") {
+                Section {
                     LabeledContent("Pipeline file") {
                         TextField("macon.yml", text: $pipeline.config.pipelineFile)
                             .textFieldStyle(.roundedBorder).autocorrectionDisabled()
@@ -103,34 +105,38 @@ struct PipelineEditView: View {
                             TextField("", text: $pipeline.config.workingDirectory)
                                 .textFieldStyle(.roundedBorder)
                             Button("Choose…") { chooseDir() }
+                                .buttonStyle(SoftButtonStyle())
                         }
                     }
-                }
+                } header: { FormSectionHeader(title: "Build", systemImage: "hammer.fill", tint: Brand.amber) }
 
-                Section("Secrets (injected as env for every step)") {
+                Section {
                     Text("Stored in the macOS Keychain, never in the repo. For TestFlight "
                          + "add ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_CONTENT (base64 .p8). "
                          + "Also e.g. SLACK_URL.")
                         .font(.caption).foregroundStyle(.secondary)
                     ForEach($secretRows) { $row in
-                        HStack {
+                        HStack(spacing: 8) {
                             TextField("KEY", text: $row.key)
                                 .textFieldStyle(.roundedBorder).autocorrectionDisabled()
-                                .frame(width: 180)
+                                .labelsHidden()
+                                .frame(width: 190)
                             SecureField("value", text: $row.value)
                                 .textFieldStyle(.roundedBorder)
+                                .labelsHidden()
                             Button(role: .destructive) {
                                 secretRows.removeAll { $0.id == row.id }
-                            } label: { Image(systemName: "minus.circle") }
+                            } label: { Image(systemName: "minus.circle.fill").foregroundStyle(Brand.rose) }
                                 .buttonStyle(.borderless)
                         }
                     }
                     Button { secretRows.append(SecretRow(key: "", value: "")) } label: {
                         Label("Add secret", systemImage: "plus")
                     }
-                }
+                    .buttonStyle(SoftButtonStyle())
+                } header: { FormSectionHeader(title: "Secrets", systemImage: "key.fill", tint: Brand.amber) }
 
-                Section("Trigger") {
+                Section {
                     Picker("Watch", selection: $pipeline.config.watchMode) {
                         ForEach(WatchMode.allCases, id: \.self) { Text($0.label).tag($0) }
                     }
@@ -182,19 +188,15 @@ struct PipelineEditView: View {
 
                     Toggle("Post build status to commits",
                            isOn: $pipeline.config.postStatus)
-                }
+                } header: { FormSectionHeader(title: "Trigger", systemImage: "dot.radiowaves.left.and.right", tint: Brand.cyan) }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
 
-            Divider()
-            HStack {
-                Spacer()
-                Button("Done") { commitSecrets(); pool.commitEdits(); dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
-            .padding()
+            footer
         }
-        .frame(width: 560, height: 660)
+        .frame(width: 560, height: 680)
+        .background(.regularMaterial)
         .task { loadSecretRows(); await reloadAll() }
         .onChange(of: pipeline.config.repoSlug) {
             pipeline.config.branch = ""
@@ -204,6 +206,34 @@ struct PipelineEditView: View {
             repos = []; branches = []; loadError = nil
             Task { await reloadAll() }
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            IconTile(systemImage: "slider.horizontal.3")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Edit Pipeline").font(.title2.weight(.bold))
+                Text(pipeline.config.name.isEmpty ? "New pipeline" : pipeline.config.name)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(18)
+        .background {
+            LinearGradient(colors: [Brand.blue.opacity(0.16), .clear], startPoint: .leading, endPoint: .trailing)
+                .background(.regularMaterial)
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Spacer()
+            Button("Done") { commitSecrets(); pool.commitEdits(); dismiss() }
+                .buttonStyle(PrimaryButtonStyle())
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(16)
+        .background(.bar)
     }
 
     private var webhookHelp: String {
