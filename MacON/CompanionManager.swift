@@ -28,7 +28,7 @@ final class CompanionManager: ObservableObject {
 
     private var service: CompanionService?
     private let store = PairingStore()
-    private let screenBox = ScreenFrameBox()
+    private let broadcaster = ScreenBroadcaster()
     private var streamer: ScreenStreamer?
     private let defaults = UserDefaults.standard
     private let enabledKey = "companion.enabled"
@@ -39,6 +39,14 @@ final class CompanionManager: ObservableObject {
         port = defaults.object(forKey: portKey) as? Int ?? 8899
         shareScreen = defaults.object(forKey: screenKey) as? Bool ?? true
         devices = store.deviceList()
+
+        // Demand-driven capture: run only while a device is viewing.
+        broadcaster.onActive = { [weak self] active in
+            Task { @MainActor in self?.setScreenCapture(active) }
+        }
+        broadcaster.onNeedKeyframe = { [weak self] in
+            Task { @MainActor in self?.streamer?.forceKeyframe() }
+        }
     }
 
     /// Should the server come up automatically at launch?
@@ -61,10 +69,7 @@ final class CompanionManager: ObservableObject {
         let svc = CompanionService(
             runners: runners, runnerName: runnerName,
             port: UInt16(clamping: port), store: store,
-            screenFrames: screenBox,
-            screenControl: { [weak self] active in
-                Task { @MainActor in self?.setScreenCapture(active) }
-            },
+            screen: broadcaster,
             onLog: { _ in })
         svc.start()
         service = svc
@@ -86,7 +91,7 @@ final class CompanionManager: ObservableObject {
     func setScreenCapture(_ active: Bool) {
         if active && shareScreen {
             guard streamer == nil else { return }
-            let s = ScreenStreamer(box: screenBox)
+            let s = ScreenStreamer(publish: { [broadcaster] packet in broadcaster.publish(packet) })
             s.start()
             streamer = s
         } else {
