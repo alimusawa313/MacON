@@ -87,7 +87,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             config.width = w
             config.height = h
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
-            config.queueDepth = 3
+            config.queueDepth = 5
             config.showsCursor = true
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.captureResolution = .best                                 // highest fidelity
@@ -114,33 +114,23 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     // MARK: Encoder
 
     private func setupEncoder(width: Int32, height: Int32) {
-        // Low-latency rate control is VideoToolbox's real-time mode — designed for
-        // screen sharing; it cuts encode latency sharply. Not on every encoder, so
-        // fall back if creation fails.
-        func create(lowLatency: Bool) -> VTCompressionSession? {
-            let spec: CFDictionary? = lowLatency
-                ? [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue!] as CFDictionary
-                : nil
-            var s: VTCompressionSession?
-            let status = VTCompressionSessionCreate(
-                allocator: nil, width: width, height: height,
-                codecType: kCMVideoCodecType_H264,
-                encoderSpecification: spec, imageBufferAttributes: nil,
-                compressedDataAllocator: nil, outputCallback: nil, refcon: nil,
-                compressionSessionOut: &s)
-            return status == noErr ? s : nil
-        }
-        guard let session = create(lowLatency: true) ?? create(lowLatency: false) else { return }
+        var s: VTCompressionSession?
+        let status = VTCompressionSessionCreate(
+            allocator: nil, width: width, height: height,
+            codecType: kCMVideoCodecType_H264,
+            encoderSpecification: nil, imageBufferAttributes: nil,
+            compressedDataAllocator: nil, outputCallback: nil, refcon: nil,
+            compressionSessionOut: &s)
+        guard status == noErr, let session = s else { return }
 
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        // Emit every frame immediately — no look-ahead buffering (the big latency win).
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 120 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 2 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 40_000_000 as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 45_000_000 as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: 0.85 as CFNumber)
 
         // Tag the stream BT.709 so the decoder reproduces colors correctly.
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ColorPrimaries, value: kCVImageBufferColorPrimaries_ITU_R_709_2)
