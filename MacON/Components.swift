@@ -13,10 +13,18 @@ import MaconKit
 extension RunnerState {
     var uiColor: Color {
         switch self {
-        case .running:  return .green
-        case .starting: return .yellow
+        case .running:  return Brand.emerald
+        case .starting: return Brand.amber
         case .stopped:  return .gray
-        case .crashed:  return .red
+        case .crashed:  return Brand.rose
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .stopped:  return "pause.fill"
+        case .starting: return "hourglass"
+        case .running:  return "bolt.fill"
+        case .crashed:  return "exclamationmark.triangle.fill"
         }
     }
 }
@@ -25,9 +33,17 @@ extension BuildState {
     var uiColor: Color {
         switch self {
         case .idle:      return .gray
-        case .running:   return .yellow
-        case .succeeded: return .green
-        case .failed:    return .red
+        case .running:   return Brand.amber
+        case .succeeded: return Brand.emerald
+        case .failed:    return Brand.rose
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .idle:      return "bolt.horizontal.fill"
+        case .running:   return "hammer.fill"
+        case .succeeded: return "checkmark"
+        case .failed:    return "xmark"
         }
     }
 }
@@ -35,10 +51,43 @@ extension BuildState {
 extension RunResult {
     var uiColor: Color {
         switch self {
-        case .succeeded: return .green
-        case .failed:    return .red
-        case .cancelled: return .orange
+        case .succeeded: return Brand.emerald
+        case .failed:    return Brand.rose
+        case .cancelled: return Brand.amber
         }
+    }
+}
+
+// MARK: - Status badge
+
+/// Rounded tile with the status color + symbol; pulses while active.
+struct StatusBadge: View {
+    var color: Color
+    var symbol: String
+    var active: Bool = false
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            if active {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .stroke(color.opacity(0.5), lineWidth: 2)
+                    .scaleEffect(pulse ? 1.35 : 1)
+                    .opacity(pulse ? 0 : 0.7)
+            }
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(color.gradient)
+                .overlay(Image(systemName: symbol).font(.title3.weight(.bold)).foregroundStyle(.white))
+                .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).strokeBorder(.white.opacity(0.25)))
+                .shadow(color: color.opacity(active ? 0.6 : 0.3), radius: active ? 8 : 3, y: 2)
+        }
+        .frame(width: 46, height: 46)
+        .onAppear { if active { run() } }
+        .onChange(of: active) { _, a in a ? run() : (pulse = false) }
+    }
+    private func run() {
+        pulse = false
+        withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { pulse = true }
     }
 }
 

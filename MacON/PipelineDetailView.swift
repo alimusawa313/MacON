@@ -42,35 +42,43 @@ struct PipelineDetailView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Dot(color: pipeline.buildState.uiColor, glow: pipeline.isWatching)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(pipeline.config.name).font(.headline)
-                Text(pipeline.buildState.label)
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text("\(pipeline.config.workspace)/\(pipeline.config.repoSlug) @ \(pipeline.config.branch)")
-                    .font(.caption).foregroundStyle(.secondary)
-                if pipeline.isWatching {
-                    let mode = pipeline.config.triggerMode == .webhook
-                        ? "webhook :\(pipeline.config.webhookPort)" : "polling"
-                    if let p = pipeline.lastPoll {
-                        let verb = pipeline.config.triggerMode == .webhook ? "last event" : "last poll"
-                        Text("watching (\(mode)) · \(verb) \(p.formatted(date: .omitted, time: .standard))")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    } else {
-                        Text("watching (\(mode))")
-                            .font(.caption2).foregroundStyle(.secondary)
+        HStack(spacing: 14) {
+            StatusBadge(color: pipeline.buildState.uiColor, symbol: pipeline.buildState.symbol,
+                        active: pipeline.isWatching || pipeline.isBuilding)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(pipeline.config.name).font(.title2.weight(.bold))
+                HStack(spacing: 6) {
+                    Text(pipeline.buildState.label)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(pipeline.buildState.uiColor)
+                    if pipeline.isWatching {
+                        let mode = pipeline.config.triggerMode == .webhook
+                            ? "webhook :\(pipeline.config.webhookPort)" : "polling"
+                        Text("· \(mode)").font(.caption).foregroundStyle(.secondary)
+                        if let p = pipeline.lastPoll {
+                            let verb = pipeline.config.triggerMode == .webhook ? "last event" : "last poll"
+                            Text("· \(verb) \(p.formatted(date: .omitted, time: .standard))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
+                Label("\(pipeline.config.workspace)/\(pipeline.config.repoSlug) @ \(pipeline.config.branch)",
+                      systemImage: "arrow.triangle.branch")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            .padding(.leading, 6)
             Spacer()
             Button { showEdit = true } label: { Label("Edit", systemImage: "pencil") }
+                .buttonStyle(SoftButtonStyle())
             Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash") }
+                .buttonStyle(SoftButtonStyle(danger: true))
         }
-        .padding()
+        .padding(18)
+        .background {
+            LinearGradient(colors: [pipeline.buildState.uiColor.opacity(0.16), .clear],
+                           startPoint: .leading, endPoint: .trailing)
+                .background(.regularMaterial)
+        }
+        .animation(.spring(duration: 0.4), value: pipeline.buildState)
     }
 
     // MARK: Runs history list
@@ -170,31 +178,38 @@ struct PipelineDetailView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             if pipeline.isWatching {
-                Button(role: .destructive) { pipeline.stopWatching() } label: {
-                    Label("Stop Watching", systemImage: "eye.slash")
+                Button { pipeline.stopWatching() } label: {
+                    Label("Stop Watching", systemImage: "eye.slash.fill")
                 }
+                .buttonStyle(SoftButtonStyle(danger: true))
             } else {
                 Button { pipeline.startWatching() } label: {
-                    Label("Start Watching", systemImage: "eye")
+                    Label("Start Watching", systemImage: "eye.fill")
                 }
+                .buttonStyle(PrimaryButtonStyle())
             }
             if pipeline.isBuilding {
-                Button(role: .destructive) { pipeline.cancelBuild() } label: {
+                Button { pipeline.cancelBuild() } label: {
                     Label("Stop Build", systemImage: "stop.fill")
                 }
+                .buttonStyle(SoftButtonStyle(danger: true))
             } else {
                 Button { selectedRun = nil; pipeline.runNow() } label: {
                     Label("Run Now", systemImage: "play.fill")
                 }
+                .buttonStyle(SoftButtonStyle())
                 .help("Build the current head commit immediately")
             }
             Spacer()
             Button { pipeline.clearLog() } label: { Label("Clear", systemImage: "text.badge.xmark") }
+                .buttonStyle(SoftButtonStyle())
                 .disabled(pipeline.log.isEmpty || selectedRun != nil)
             Button { copyLog() } label: { Label("Copy", systemImage: "doc.on.doc") }
+                .buttonStyle(SoftButtonStyle())
                 .disabled(displayedLines.isEmpty)
         }
-        .padding()
+        .padding(16)
+        .background(.bar)
     }
 
     private func copyLog() {
