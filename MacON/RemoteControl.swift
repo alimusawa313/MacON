@@ -49,7 +49,11 @@ final class RemoteControl {
             if let code = e.code { key(CGKeyCode(code), down: e.down ?? true) }
         case "combo":
             // A shortcut chord, e.g. Ctrl+→ (next space) or Ctrl+↑ (Mission Control).
-            if let code = e.code { press(CGKeyCode(code), mods: e.mods ?? []) }
+            if let code = e.code {
+                // Mission Control (⌃↑) has a guaranteed non-keyboard path — use it.
+                if code == 126, e.mods == ["ctrl"] { openMissionControl() }
+                else { press(CGKeyCode(code), mods: e.mods ?? []) }
+            }
         case "media":
             // A media key (play/next/prev/mute) — NX_KEYTYPE_* code.
             if let code = e.code { mediaKey(Int32(code)) }
@@ -139,15 +143,47 @@ final class RemoteControl {
         CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.post(tap: .cghidEventTap)
     }
 
-    /// Press a shortcut chord (e.g. Ctrl+→ to switch spaces, like a 3-finger
-    /// swipe). System gestures such as Mission Control often ignore a flags-only
-    /// synthetic event, so we press the real modifier keys around the key.
+    /// Trigger Mission Control by launching its app — reliable regardless of
+    /// how the system treats synthetic keyboard chords.
+    private func openMissionControl() {
+        let url = URL(fileURLWithPath: "/System/Applications/Mission Control.app")
+        NSWorkspace.shared.openApplication(at: url, configuration: .init(), completionHandler: nil)
+    }
+
+    /// Press a shortcut chord (e.g. Ctrl+→ to switch spaces). Symbolic hotkeys
+    /// (Spaces, Mission Control) are picky about synthetic input — three things
+    /// are required for them to accept the chord:
+    ///  • a real HID event source (not nil),
+    ///  • arrow keys tagged with the Fn/NumPad flags physical hardware sends,
+    ///  • a settle delay so the modifier registers as *held* before the key.
     private func press(_ code: CGKeyCode, mods: [String]) {
-        holdingModifiers(mods) { flags in
-            for down in [true, false] {
-                let ev = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
-                ev?.flags = flags; ev?.post(tap: .cghidEventTap)
-            }
+        let src = CGEventSource(stateID: .hidSystemState)
+        var flags: CGEventFlags = []
+        var modKeys: [CGKeyCode] = []
+        if mods.contains("cmd")   { flags.insert(.maskCommand);   modKeys.append(55) }
+        if mods.contains("ctrl")  { flags.insert(.maskControl);   modKeys.append(59) }
+        if mods.contains("opt")   { flags.insert(.maskAlternate); modKeys.append(58) }
+        if mods.contains("shift") { flags.insert(.maskShift);     modKeys.append(56) }
+        if (123...126).contains(code) {                 // arrows: ←123 →124 ↓125 ↑126
+            flags.insert(.maskSecondaryFn)
+            flags.insert(.maskNumericPad)
+        }
+
+        for m in modKeys {
+            let ev = CGEvent(keyboardEventSource: src, virtualKey: m, keyDown: true)
+            ev?.flags = flags
+            ev?.post(tap: .cghidEventTap)
+        }
+        usleep(25_000)                                  // modifier settles as held
+        for down in [true, false] {
+            let ev = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
+            ev?.flags = flags
+            ev?.post(tap: .cghidEventTap)
+        }
+        usleep(25_000)                                  // key registers before release
+        for m in modKeys.reversed() {
+            let ev = CGEvent(keyboardEventSource: src, virtualKey: m, keyDown: false)
+            ev?.post(tap: .cghidEventTap)
         }
     }
 
