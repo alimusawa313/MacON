@@ -116,12 +116,14 @@ struct PipelineEditView: View {
                          + "Also e.g. SLACK_URL.")
                         .font(.caption).foregroundStyle(.secondary)
                     ForEach($secretRows) { $row in
-                        HStack {
+                        HStack(spacing: 8) {
                             TextField("KEY", text: $row.key)
                                 .textFieldStyle(.roundedBorder).autocorrectionDisabled()
-                                .frame(width: 180)
+                                .labelsHidden()
+                                .frame(width: 190)
                             SecureField("value", text: $row.value)
                                 .textFieldStyle(.roundedBorder)
+                                .labelsHidden()
                             Button(role: .destructive) {
                                 secretRows.removeAll { $0.id == row.id }
                             } label: { Image(systemName: "minus.circle.fill").foregroundStyle(Brand.rose) }
