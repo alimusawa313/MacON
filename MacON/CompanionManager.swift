@@ -32,6 +32,15 @@ final class CompanionManager: ObservableObject {
             if allowControl { remote.requestPermission() }
         }
     }
+    /// Expose the server to the internet via a Cloudflare quick tunnel.
+    @Published var remoteEnabled: Bool {
+        didSet {
+            defaults.set(remoteEnabled, forKey: remoteKey)
+            syncTunnel()
+        }
+    }
+    /// The tunnel process/state (UI observes through this manager).
+    let tunnel = TunnelManager()
 
     private var service: CompanionService?
     private let store = PairingStore()
@@ -43,12 +52,20 @@ final class CompanionManager: ObservableObject {
     private let portKey = "companion.port"
     private let screenKey = "companion.shareScreen"
     private let controlKey = "companion.allowControl"
+    private let remoteKey = "companion.remote"
+    private var tunnelSink: AnyCancellable?
 
     init() {
         port = defaults.object(forKey: portKey) as? Int ?? 8899
         shareScreen = defaults.object(forKey: screenKey) as? Bool ?? true
         allowControl = defaults.bool(forKey: controlKey)   // default off (sensitive)
+        remoteEnabled = defaults.bool(forKey: remoteKey)
         devices = store.deviceList()
+
+        // Surface tunnel state changes through this manager's own publisher.
+        tunnelSink = tunnel.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
 
         // Demand-driven capture: run only while a device is viewing.
         broadcaster.onActive = { [weak self] active in
@@ -105,15 +122,26 @@ final class CompanionManager: ObservableObject {
         isRunning = true
         refreshDevices()
         if store.deviceCount == 0 { newCode() }
+        syncTunnel()
     }
 
     func stop() {
+        tunnel.stop()
         setScreenCapture(false)
         service?.stop()
         service = nil
         isRunning = false
         pairingCode = nil
         defaults.set(false, forKey: enabledKey)
+    }
+
+    /// Keep the tunnel in step with the server + the remote toggle.
+    private func syncTunnel() {
+        if isRunning && remoteEnabled {
+            tunnel.start(port: port)
+        } else {
+            tunnel.stop()
+        }
     }
 
     /// Start/stop screen capture on demand — driven by whether anyone is viewing.

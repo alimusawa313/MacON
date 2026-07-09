@@ -195,6 +195,9 @@ struct SettingsView: View {
                 if !companion.devices.isEmpty {
                     caption("\(companion.devices.count) paired device(s)")
                 }
+
+                Toggle("Remote access (internet tunnel)", isOn: $companion.remoteEnabled)
+                remoteStatus
             }
             Toggle("Let paired devices view this screen", isOn: $companion.shareScreen)
             Toggle("Let paired devices control this Mac (cursor & keyboard)", isOn: $companion.allowControl)
@@ -203,6 +206,52 @@ struct SettingsView: View {
                      systemImage: "exclamationmark.triangle.fill", tint: Brand.amber)
             }
         } header: { FormSectionHeader(title: "Companion app", systemImage: "ipad.and.iphone", tint: Brand.blue) }
+    }
+
+    /// Tunnel state row(s) under the remote-access toggle.
+    @ViewBuilder
+    private var remoteStatus: some View {
+        switch companion.tunnel.status {
+        case .off:
+            if companion.remoteEnabled { EmptyView() }
+            else { caption("Reach this Mac from anywhere via a free Cloudflare quick tunnel. "
+                           + "Pairing codes and device tokens are still required — the link alone grants nothing.") }
+        case .notInstalled:
+            HStack(spacing: 8) {
+                Pill(text: "cloudflared is not installed",
+                     systemImage: "exclamationmark.triangle.fill", tint: Brand.amber)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString("brew install cloudflared", forType: .string)
+                } label: { Label("Copy install command", systemImage: "doc.on.doc") }
+                    .buttonStyle(SoftButtonStyle())
+                Spacer()
+            }
+        case .starting:
+            Pill(text: "Starting tunnel…", systemImage: "clock.fill", tint: Brand.cyan)
+        case .running(let url):
+            HStack(spacing: 8) {
+                Pill(text: url.replacingOccurrences(of: "https://", with: ""),
+                     systemImage: "globe", tint: Brand.emerald)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url, forType: .string)
+                } label: { Image(systemName: "doc.on.doc") }
+                    .buttonStyle(.borderless)
+                    .help("Copy the public address")
+                Spacer()
+            }
+            caption("Use this address in the companion app instead of the local one. "
+                    + "It changes each time the tunnel restarts — update it on the device "
+                    + "(no re-pairing needed).")
+        case .failed(let message):
+            HStack(spacing: 8) {
+                Pill(text: message, systemImage: "xmark.octagon.fill", tint: Brand.rose)
+                Button("Retry") { companion.remoteEnabled = false; companion.remoteEnabled = true }
+                    .buttonStyle(SoftButtonStyle())
+                Spacer()
+            }
+        }
     }
 
     private var privacyScreenSection: some View {
