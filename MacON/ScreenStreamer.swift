@@ -34,6 +34,13 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private var fps: Int                        // target frame rate (30 / 60 / 120)
     private var config: SCStreamConfiguration?  // kept so fps can be changed live
 
+    // Adaptive bitrate: start mid-ladder, ramp toward max on a clean link,
+    // back off fast when the server reports drops.
+    private var bitrate = 25_000_000
+    private let minBitrate = 4_000_000
+    private let maxBitrate = 45_000_000
+    private var cleanWindows = 0
+
     private let keyframeLock = NSLock()
     private var pendingKeyframe = true         // first frame is always a keyframe
 
@@ -57,6 +64,44 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(newFPS))
             stream.updateConfiguration(config) { _ in }
         }
+    }
+
+    /// One adaptation window from the broadcaster's delivery stats. Congested →
+    /// cut bitrate 40% immediately; clean for 3 consecutive windows → step up 30%.
+    func adapt(sent: Int, dropped: Int) {
+        let total = sent + dropped
+        guard total > 0 else { return }
+        let dropRate = Double(dropped) / Double(total)
+        if dropRate > 0.08 {
+            cleanWindows = 0
+            let next = max(minBitrate, Int(Double(bitrate) * 0.6))
+            if next != bitrate {
+                bitrate = next
+                applyBitrate()
+                NSLog("MacOn: link congested (%.0f%% dropped) — bitrate → %d Mbps",
+                      dropRate * 100, bitrate / 1_000_000)
+            }
+        } else if dropRate < 0.02 {
+            cleanWindows += 1
+            if cleanWindows >= 3, bitrate < maxBitrate {
+                cleanWindows = 0
+                bitrate = min(maxBitrate, Int(Double(bitrate) * 1.3))
+                applyBitrate()
+            }
+        } else {
+            cleanWindows = 0
+        }
+    }
+
+    private func applyBitrate() {
+        guard let session else { return }
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate,
+                             value: bitrate as CFNumber)
+        // Hard cap on bursts (1.5× average over 1s) so keyframes can't spike
+        // the link into a stall.
+        let limits: [Int] = [Int(Double(bitrate) * 1.5 / 8), 1]
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
+                             value: limits as CFArray)
     }
 
     /// Change the capture resolution cap — restarts capture at the new size
@@ -175,7 +220,9 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 120 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 2 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 45_000_000 as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
+                             value: [Int(Double(bitrate) * 1.5 / 8), 1] as CFArray)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: 0.85 as CFNumber)
 
         // Tag the stream BT.709 so the decoder reproduces colors correctly.
