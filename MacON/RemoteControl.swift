@@ -9,6 +9,7 @@
 
 import Foundation
 import CoreGraphics
+import CoreAudio
 import AppKit
 import MaconKit
 
@@ -42,6 +43,11 @@ final class RemoteControl {
         case "combo":
             // A shortcut chord, e.g. Ctrl+→ (next space) or Ctrl+↑ (Mission Control).
             if let code = e.code { press(CGKeyCode(code), mods: e.mods ?? []) }
+        case "media":
+            // A media key (play/next/prev/mute) — NX_KEYTYPE_* code.
+            if let code = e.code { mediaKey(Int32(code)) }
+        case "volume":
+            if let v = e.v { setSystemVolume(Float(v)) }
         default:
             break
         }
@@ -107,6 +113,39 @@ final class RemoteControl {
                 ev?.flags = flags; ev?.post(tap: .cghidEventTap)
             }
         }
+    }
+
+    /// Simulate a media key (play/pause, next, prev, mute…) via a system-defined
+    /// event — how the physical media keys are delivered.
+    private func mediaKey(_ key: Int32) {
+        func post(_ down: Bool) {
+            let flags = NSEvent.ModifierFlags(rawValue: UInt(down ? 0xA00 : 0xB00))
+            let data1 = Int((key << 16) | ((down ? 0xA : 0xB) << 8))
+            NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: flags,
+                               timestamp: 0, windowNumber: 0, context: nil,
+                               subtype: 8, data1: data1, data2: -1)?
+                .cgEvent?.post(tap: .cghidEventTap)
+        }
+        post(true); post(false)
+    }
+
+    /// Set the default output device's volume (0…1).
+    private func setSystemVolume(_ value: Float) {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var deviceAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &deviceAddr, 0, nil, &size, &deviceID) == noErr else { return }
+
+        var vol = max(0, min(1, value))
+        // 'vmvc' = virtual main volume (constant renamed across SDKs; use the code).
+        let virtualMainVolume: AudioObjectPropertySelector = 0x766d7663
+        var volAddr = AudioObjectPropertyAddress(
+            mSelector: virtualMainVolume,
+            mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectHasProperty(deviceID, &volAddr) else { return }
+        AudioObjectSetPropertyData(deviceID, &volAddr, 0, nil, UInt32(MemoryLayout<Float>.size), &vol)
     }
 
     /// Hold the given modifiers (real key events) for the duration of `body`.
