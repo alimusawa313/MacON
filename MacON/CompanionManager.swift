@@ -125,9 +125,25 @@ final class CompanionManager: ObservableObject {
             s.setExcludedWindows(PrivacyCurtain.shared.excludedWindowNumbers)
             s.start()
             streamer = s
+            startAdaptation()
         } else {
+            statsTimer?.invalidate(); statsTimer = nil
             streamer?.stop()
             streamer = nil
+        }
+    }
+
+    /// Poll delivery stats every 2s and let the encoder adapt its bitrate to
+    /// what the link is actually draining.
+    private var statsTimer: Timer?
+    private func startAdaptation() {
+        statsTimer?.invalidate()
+        statsTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let streamer = self.streamer else { return }
+                let stats = self.broadcaster.takeStats()
+                streamer.adapt(sent: stats.sent, dropped: stats.dropped)
+            }
         }
     }
 
