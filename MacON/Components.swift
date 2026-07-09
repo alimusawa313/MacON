@@ -228,7 +228,6 @@ private struct StepRow: View {
         if section.succeeded { return Brand.emerald }
         return .secondary
     }
-    private var isTerminal: Bool { section.failed || section.succeeded }
     private var kindIcon: String {
         switch section.kind {
         case .command: return "terminal"
@@ -281,11 +280,6 @@ private struct StepRow: View {
         }
         .background(RoundedRectangle(cornerRadius: 11, style: .continuous)
             .fill(hover ? tint.opacity(0.1) : Color.primary.opacity(0.04)))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(tint.opacity(isTerminal ? 0.9 : 0.4))
-                .frame(width: 3).padding(.vertical, 7)
-        }
         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(.white.opacity(0.06)))
         .onHover { hover = $0 }
