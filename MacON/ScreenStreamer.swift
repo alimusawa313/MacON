@@ -115,6 +115,10 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         // Higher bitrate so text/edges stay sharp (screen content is detail-heavy).
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 45_000_000 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: 0.85 as CFNumber)
+        // Cap peak data rate so a burst of fast motion can't produce a frame too
+        // large to drain in time (which would force a drop + resync). [bytes, seconds]
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
+                             value: [NSNumber(value: 8_000_000), NSNumber(value: 1.0)] as CFArray)
 
         // Tag the stream BT.709 so the decoder reproduces colors correctly.
         // Without these the iPad guesses the matrix/range → washed-out colors.
