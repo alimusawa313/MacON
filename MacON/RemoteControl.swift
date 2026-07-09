@@ -94,16 +94,27 @@ final class RemoteControl {
         CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.post(tap: .cghidEventTap)
     }
 
-    /// Press a key with modifier flags held, then release — a shortcut chord.
+    /// Press a shortcut chord (e.g. Ctrl+→ to switch spaces, like a 3-finger
+    /// swipe). System gestures such as Mission Control often ignore a flags-only
+    /// synthetic event, so we press the real modifier keys around the arrow.
     private func press(_ code: CGKeyCode, mods: [String]) {
         var flags: CGEventFlags = []
-        if mods.contains("cmd")   { flags.insert(.maskCommand) }
-        if mods.contains("ctrl")  { flags.insert(.maskControl) }
-        if mods.contains("opt")   { flags.insert(.maskAlternate) }
-        if mods.contains("shift") { flags.insert(.maskShift) }
-        for down in [true, false] {
+        var modKeys: [CGKeyCode] = []
+        if mods.contains("cmd")   { flags.insert(.maskCommand);   modKeys.append(55) }  // ⌘
+        if mods.contains("ctrl")  { flags.insert(.maskControl);   modKeys.append(59) }  // ⌃
+        if mods.contains("opt")   { flags.insert(.maskAlternate); modKeys.append(58) }  // ⌥
+        if mods.contains("shift") { flags.insert(.maskShift);     modKeys.append(56) }  // ⇧
+
+        for m in modKeys {                                   // modifiers down
+            let ev = CGEvent(keyboardEventSource: nil, virtualKey: m, keyDown: true)
+            ev?.flags = flags; ev?.post(tap: .cghidEventTap)
+        }
+        for down in [true, false] {                          // key down, then up
             let ev = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
-            ev?.flags = flags
+            ev?.flags = flags; ev?.post(tap: .cghidEventTap)
+        }
+        for m in modKeys.reversed() {                        // modifiers up
+            let ev = CGEvent(keyboardEventSource: nil, virtualKey: m, keyDown: false)
             ev?.post(tap: .cghidEventTap)
         }
     }
