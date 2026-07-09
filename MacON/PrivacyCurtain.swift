@@ -275,9 +275,10 @@ struct CurtainStyle: Codable, Equatable {
     var glyph: String = "hand.raised.fill"
     var glyphAnimation: CurtainGlyphAnimation = .breathe
     var showHint: Bool = true
-    /// Burn-in protection: slowly drifts the bright foreground so no pixel
-    /// stays lit in one place. On by default — this wall may sit up for hours.
-    var reduceBurnIn: Bool = true
+    /// How the bright foreground moves — also the burn-in protection: keeping
+    /// it moving stops any pixel staying lit in one place (this wall may sit up
+    /// for hours). Defaults to a gentle drift.
+    var motion: CurtainMotion = .drift
     var imagePath: String? = nil
 
     init() {}
@@ -290,19 +291,52 @@ struct CurtainStyle: Codable, Equatable {
         glyph          = try c.decodeIfPresent(String.self, forKey: .glyph) ?? "hand.raised.fill"
         glyphAnimation = try c.decodeIfPresent(CurtainGlyphAnimation.self, forKey: .glyphAnimation) ?? .breathe
         showHint       = try c.decodeIfPresent(Bool.self, forKey: .showHint) ?? true
-        reduceBurnIn   = try c.decodeIfPresent(Bool.self, forKey: .reduceBurnIn) ?? true
+        if let m = try c.decodeIfPresent(CurtainMotion.self, forKey: .motion) {
+            motion = m
+        } else if let old = try c.decodeIfPresent(Bool.self, forKey: .reduceBurnIn) {
+            motion = old ? .drift : .none   // migrate the previous toggle
+        }
         imagePath      = try c.decodeIfPresent(String.self, forKey: .imagePath)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(background, forKey: .background)
+        try c.encode(color, forKey: .color)
+        try c.encode(glyph, forKey: .glyph)
+        try c.encode(glyphAnimation, forKey: .glyphAnimation)
+        try c.encode(showHint, forKey: .showHint)
+        try c.encode(motion, forKey: .motion)
+        try c.encodeIfPresent(imagePath, forKey: .imagePath)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case background, color, glyph, glyphAnimation, showHint, motion, reduceBurnIn, imagePath
+    }
+}
+
+/// How the bright foreground moves (and keeps pixels from burning in).
+enum CurtainMotion: String, CaseIterable, Identifiable, Codable {
+    case none, drift, bounce
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .none:   return "Static"
+        case .drift:  return "Gentle drift"
+        case .bounce: return "DVD bounce"
+        }
     }
 }
 
 enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
-    case aurora, gradient, solid, starfield, waves, orbs, rays, image
+    case aurora, gradient, solid, black, starfield, waves, orbs, rays, image
     var id: String { rawValue }
     var title: String {
         switch self {
         case .aurora:    return "Aurora"
         case .gradient:  return "Gradient"
         case .solid:     return "Solid"
+        case .black:     return "Pure Black"
         case .starfield: return "Stars"
         case .waves:     return "Waves"
         case .orbs:      return "Orbs"
@@ -315,6 +349,7 @@ enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
         case .aurora:    return "sparkles"
         case .gradient:  return "square.fill.on.circle.fill"
         case .solid:     return "square.fill"
+        case .black:     return "moon.fill"
         case .starfield: return "sparkle"
         case .waves:     return "water.waves"
         case .orbs:      return "circle.hexagongrid.fill"
@@ -388,6 +423,8 @@ struct CurtainBackdrop: View {
             }
         case .solid:
             c.base.mix(with: .black, by: 0.72)
+        case .black:
+            Color.black
         case .starfield:
             ZStack {
                 LinearGradient(colors: [.black, c.base.mix(with: .black, by: 0.85)],
@@ -449,6 +486,13 @@ private struct CurtainAurora: View {
 }
 
 private func cfrac(_ x: Double) -> Double { x - floor(x) }
+
+/// Triangle wave in [-1, 1] — linear up then down, for edge-bouncing motion.
+private func triWave(_ u: Double) -> CGFloat {
+    let s = u - floor(u)                       // 0..1
+    let v = s < 0.5 ? s * 2 : 2 - s * 2        // 0..1..0
+    return CGFloat(v * 2 - 1)                   // -1..1
+}
 
 /// Drifting star field, tinted by the accent color.
 private struct Starfield: View {
@@ -569,26 +613,45 @@ struct CurtainStage: View {
     @State private var driftX = false
     @State private var driftY = false
 
-    private var drift: Bool { style.reduceBurnIn && animate }
+    private var driftOn: Bool { animate && style.motion == .drift }
+    private var bounceOn: Bool { animate && style.motion == .bounce }
 
     var body: some View {
         ZStack {
             CurtainBackdrop(style: style)
 
-            // Burn-in protection: slowly drift the bright foreground so no pixel
-            // stays lit in a fixed spot. Two out-of-sync ~70–90s sweeps trace a
-            // slow 2-D path without re-rendering (which would disturb the glyph
-            // and pulse animations).
-            foreground
-                .offset(x: drift ? (driftX ? 26 : -26) : 0,
-                        y: drift ? (driftY ? 20 : -16) : 0)
-                .animation(.easeInOut(duration: 67).repeatForever(autoreverses: true), value: driftX)
-                .animation(.easeInOut(duration: 89).repeatForever(autoreverses: true), value: driftY)
+            if bounceOn {
+                bounceForeground
+            } else {
+                // Gentle drift: two out-of-sync ~70–90s sweeps trace a slow 2-D
+                // path via implicit animation (no per-frame re-render, so the
+                // glyph and pulse animations aren't disturbed).
+                foreground
+                    .offset(x: driftOn ? (driftX ? 26 : -26) : 0,
+                            y: driftOn ? (driftY ? 20 : -16) : 0)
+                    .animation(.easeInOut(duration: 67).repeatForever(autoreverses: true), value: driftX)
+                    .animation(.easeInOut(duration: 89).repeatForever(autoreverses: true), value: driftY)
+            }
         }
         .ignoresSafeArea()
         .onAppear {
             if animate { pulse = true }
-            if drift { driftX = true; driftY = true }
+            if driftOn { driftX = true; driftY = true }
+        }
+    }
+
+    /// DVD-logo bounce: the content travels in straight lines and ricochets off
+    /// the edges (two triangle waves at different rates trace the classic path).
+    private var bounceForeground: some View {
+        GeometryReader { geo in
+            TimelineView(.animation) { ctx in
+                let t = ctx.date.timeIntervalSinceReferenceDate
+                let ax = max(0, geo.size.width / 2 - min(geo.size.width * 0.30, 380))
+                let ay = max(0, geo.size.height / 2 - min(geo.size.height * 0.24, 200))
+                foreground
+                    .position(x: geo.size.width / 2 + triWave(t * 0.045) * ax,
+                              y: geo.size.height / 2 + triWave(t * 0.032) * ay)
+            }
         }
     }
 

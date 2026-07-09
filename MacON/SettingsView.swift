@@ -299,8 +299,11 @@ struct SettingsView: View {
 
             Toggle("Show the “Press ⌃⌥⌘U to unlock” hint", isOn: $curtain.style.showHint)
 
-            Toggle("Reduce burn-in (slowly drifts the content)", isOn: $curtain.style.reduceBurnIn)
-            caption("Recommended if the wall may stay up for a long time on an OLED display.")
+            Picker("Motion", selection: $curtain.style.motion) {
+                ForEach(CurtainMotion.allCases) { Text($0.title).tag($0) }
+            }
+            caption("Keeps the text moving so it can't burn into an OLED display. "
+                    + "“DVD bounce” ricochets it around the screen corners.")
 
             TextField("Wall message", text: $curtain.message)
                 .textFieldStyle(.roundedBorder)
