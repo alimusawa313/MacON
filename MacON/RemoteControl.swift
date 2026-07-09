@@ -47,6 +47,9 @@ final class RemoteControl {
             if let s = e.s { type(s) }
         case "key":
             if let code = e.code { key(CGKeyCode(code), down: e.down ?? true) }
+        case "launch":
+            // Open (or focus) a Mac app by its .app path — the shortcut deck.
+            if let path = e.s { launchApp(path: path) }
         case "combo":
             // A shortcut chord, e.g. Ctrl+→ (next space) or Ctrl+↑ (Mission Control).
             if let code = e.code {
@@ -148,6 +151,13 @@ final class RemoteControl {
     private func openMissionControl() {
         let url = URL(fileURLWithPath: "/System/Applications/Mission Control.app")
         NSWorkspace.shared.openApplication(at: url, configuration: .init(), completionHandler: nil)
+    }
+
+    /// Open (or bring to front) a Mac app by its `.app` path — shortcut deck.
+    private func launchApp(path: String) {
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path), configuration: cfg)
     }
 
     /// Press a shortcut chord (e.g. Ctrl+→ to switch spaces). Symbolic hotkeys
