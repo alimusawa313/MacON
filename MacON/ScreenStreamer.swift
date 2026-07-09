@@ -87,7 +87,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             config.width = w
             config.height = h
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
-            config.queueDepth = 5
+            config.queueDepth = 3
             config.showsCursor = true
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.captureResolution = .best                                 // highest fidelity
@@ -114,31 +114,35 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     // MARK: Encoder
 
     private func setupEncoder(width: Int32, height: Int32) {
-        var s: VTCompressionSession?
-        let status = VTCompressionSessionCreate(
-            allocator: nil, width: width, height: height,
-            codecType: kCMVideoCodecType_H264,
-            encoderSpecification: nil, imageBufferAttributes: nil,
-            compressedDataAllocator: nil, outputCallback: nil, refcon: nil,
-            compressionSessionOut: &s)
-        guard status == noErr, let session = s else { return }
+        // Low-latency rate control is VideoToolbox's real-time mode — designed for
+        // screen sharing; it cuts encode latency sharply. Not on every encoder, so
+        // fall back if creation fails.
+        func create(lowLatency: Bool) -> VTCompressionSession? {
+            let spec: CFDictionary? = lowLatency
+                ? [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue!] as CFDictionary
+                : nil
+            var s: VTCompressionSession?
+            let status = VTCompressionSessionCreate(
+                allocator: nil, width: width, height: height,
+                codecType: kCMVideoCodecType_H264,
+                encoderSpecification: spec, imageBufferAttributes: nil,
+                compressedDataAllocator: nil, outputCallback: nil, refcon: nil,
+                compressionSessionOut: &s)
+            return status == noErr ? s : nil
+        }
+        guard let session = create(lowLatency: true) ?? create(lowLatency: false) else { return }
 
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        // Emit every frame immediately — no look-ahead buffering (the big latency win).
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 120 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 2 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
-        // Higher bitrate so text/edges stay sharp (screen content is detail-heavy).
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 45_000_000 as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: 0.85 as CFNumber)
-        // Cap peak data rate so a burst of fast motion can't produce a frame too
-        // large to drain in time (which would force a drop + resync). [bytes, seconds]
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
-                             value: [NSNumber(value: 8_000_000), NSNumber(value: 1.0)] as CFArray)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 40_000_000 as CFNumber)
 
         // Tag the stream BT.709 so the decoder reproduces colors correctly.
-        // Without these the iPad guesses the matrix/range → washed-out colors.
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ColorPrimaries, value: kCVImageBufferColorPrimaries_ITU_R_709_2)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_TransferFunction, value: kCVImageBufferTransferFunction_ITU_R_709_2)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_YCbCrMatrix, value: kCVImageBufferYCbCrMatrix_ITU_R_709_2)
