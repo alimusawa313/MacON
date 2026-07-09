@@ -14,6 +14,7 @@ struct MacONApp: App {
     @StateObject private var pool = RunnerPool()
     @StateObject private var pipelines = PipelinePool()
     @StateObject private var companion = CompanionManager()
+    @StateObject private var theme = ThemeManager.shared
 
     var body: some Scene {
         WindowGroup {
@@ -21,6 +22,7 @@ struct MacONApp: App {
                 .environmentObject(pool)
                 .environmentObject(pipelines)
                 .environmentObject(companion)
+                .environmentObject(theme)
                 .tint(Brand.blue)
                 .task {
                     // Bring the companion server back up if it was on last time.

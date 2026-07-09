@@ -11,17 +11,22 @@ import SwiftUI
 
 // MARK: - Palette
 
+/// Semantic color tokens sourced from the active theme (see ThemeKit.swift).
+/// The historical names (`blue`, `indigo`, …) are kept so every existing call
+/// site re-skins for free when the theme changes. Only colors vary — shapes,
+/// corner rounding, and type are constant across themes.
 enum Brand {
-    static let blue    = Color(red: 0.231, green: 0.510, blue: 0.965)
-    static let indigo  = Color(red: 0.388, green: 0.400, blue: 0.945)
-    static let cyan    = Color(red: 0.204, green: 0.722, blue: 0.949)
-    static let amber   = Color(red: 0.961, green: 0.620, blue: 0.102)
-    static let emerald = Color(red: 0.063, green: 0.725, blue: 0.506)
-    static let rose    = Color(red: 0.961, green: 0.247, blue: 0.369)
+    private static var p: Palette { ThemeManager.shared.palette }
 
-    /// Signature diagonal gradient (blue → indigo).
-    static let gradient = LinearGradient(colors: [blue, indigo],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing)
+    static var blue:    Color { p.primary }
+    static var indigo:  Color { p.secondary }
+    static var cyan:    Color { p.accent }
+    static var amber:   Color { p.warning }
+    static var emerald: Color { p.success }
+    static var rose:    Color { p.danger }
+
+    /// Signature diagonal gradient (or flat fill in Solid style) for the active theme.
+    static var gradient: LinearGradient { p.gradient }
 }
 
 extension Color {
@@ -219,11 +224,11 @@ struct SoftButtonStyle: ButtonStyle {
 struct AuroraBackground: View {
     var intensity: Double = 0.4
 
-    private let colors: [Color] = [
-        Brand.indigo, Brand.blue, Brand.cyan,
-        Brand.blue, Brand.indigo, Brand.blue,
-        Brand.cyan, Brand.blue, Brand.indigo,
-    ]
+    private var colors: [Color] {
+        [Brand.indigo, Brand.blue, Brand.cyan,
+         Brand.blue, Brand.indigo, Brand.blue,
+         Brand.cyan, Brand.blue, Brand.indigo]
+    }
 
     var body: some View {
         TimelineView(.animation) { ctx in
