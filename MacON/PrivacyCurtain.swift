@@ -42,6 +42,14 @@ final class PrivacyCurtain: ObservableObject {
     @Published var message: String {
         didSet { UserDefaults.standard.set(message, forKey: Self.msgKey) }
     }
+    /// Visual appearance (background kind, color, glyph, image, hint).
+    @Published var style: CurtainStyle {
+        didSet {
+            if let data = try? JSONEncoder().encode(style) {
+                UserDefaults.standard.set(data, forKey: Self.styleKey)
+            }
+        }
+    }
 
     /// Called whenever the wall is raised or lowered so capture can refresh
     /// which windows it excludes.
@@ -51,11 +59,18 @@ final class PrivacyCurtain: ObservableObject {
     private var hotKey: GlobalHotKey?
 
     private static let msgKey = "companion.curtain.message"
+    private static let styleKey = "companion.curtain.style"
     private static let passAccount = "companion.curtain.pass"
     private static let defaultMessage = "In use by MacOn — please don't touch."
 
     private init() {
         message = UserDefaults.standard.string(forKey: Self.msgKey) ?? Self.defaultMessage
+        if let data = UserDefaults.standard.data(forKey: Self.styleKey),
+           let s = try? JSONDecoder().decode(CurtainStyle.self, from: data) {
+            style = s
+        } else {
+            style = CurtainStyle()
+        }
         // ⌃⌥⌘U — reveal the unlock prompt / drop the wall, from anywhere.
         hotKey = GlobalHotKey(keyCode: UInt32(kVK_ANSI_U),
                               modifiers: UInt32(controlKey | optionKey | cmdKey)) { [weak self] in
@@ -143,6 +158,48 @@ final class PrivacyCurtain: ObservableObject {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    // MARK: Custom image
+
+    /// Copy a chosen image into Application Support and use it as the backdrop.
+    func setCustomImage(from url: URL) {
+        let fm = FileManager.default
+        guard let dir = try? appSupportDir() else { return }
+        let ext = url.pathExtension.isEmpty ? "img" : url.pathExtension
+        let dest = dir.appendingPathComponent("curtain-background.\(ext)")
+        // Clear any prior file(s).
+        clearCustomImageFiles()
+        do {
+            try fm.copyItem(at: url, to: dest)
+            style.imagePath = dest.path
+            style.background = .image
+        } catch {
+            NSLog("MacOn: couldn't import curtain image — \(error.localizedDescription)")
+        }
+    }
+
+    func clearCustomImage() {
+        clearCustomImageFiles()
+        style.imagePath = nil
+        if style.background == .image { style.background = .aurora }
+    }
+
+    private func clearCustomImageFiles() {
+        guard let dir = try? appSupportDir() else { return }
+        let fm = FileManager.default
+        if let items = try? fm.contentsOfDirectory(atPath: dir.path) {
+            for name in items where name.hasPrefix("curtain-background.") {
+                try? fm.removeItem(at: dir.appendingPathComponent(name))
+            }
+        }
+    }
+
+    private func appSupportDir() throws -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let dir = base.appendingPathComponent("MacON", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     // MARK: Windows
 
     private func buildWindows() {
@@ -209,38 +266,170 @@ final class GlobalHotKey {
     }
 }
 
-// MARK: - Curtain content
+// MARK: - Style model
 
-private struct CurtainView: View {
-    @ObservedObject var curtain: PrivacyCurtain
-    var primary: Bool
+/// What the wall looks like. Persisted as JSON.
+struct CurtainStyle: Codable, Equatable {
+    var background: CurtainBackground = .aurora
+    var color: ThemeColor = .blue
+    var glyph: String = "hand.raised.fill"
+    var showHint: Bool = true
+    var imagePath: String? = nil
+}
+
+enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
+    case aurora, gradient, solid, starfield, image
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .aurora:    return "Aurora"
+        case .gradient:  return "Gradient"
+        case .solid:     return "Solid"
+        case .starfield: return "Stars"
+        case .image:     return "Image"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .aurora:    return "sparkles"
+        case .gradient:  return "square.fill.on.circle.fill"
+        case .solid:     return "square.fill"
+        case .starfield: return "sparkle"
+        case .image:     return "photo.fill"
+        }
+    }
+}
+
+/// Glyphs offered in the picker.
+let curtainGlyphOptions = [
+    "hand.raised.fill", "lock.fill", "moon.stars.fill", "cup.and.saucer.fill",
+    "bolt.fill", "eye.slash.fill", "figure.walk", "powersleep", "exclamationmark.octagon.fill",
+]
+
+// MARK: - Backdrop
+
+/// The animated/static background layer, driven entirely by the style.
+struct CurtainBackdrop: View {
+    var style: CurtainStyle
+
+    @ViewBuilder
+    var body: some View {
+        let c = style.color
+        switch style.background {
+        case .aurora:
+            ZStack {
+                Color.black
+                CurtainAurora(color: c).opacity(0.55)
+                RadialGradient(colors: [c.base.opacity(0.25), .clear],
+                               center: .center, startRadius: 10, endRadius: 640)
+            }
+        case .gradient:
+            ZStack {
+                Color.black
+                LinearGradient(colors: [c.base.opacity(0.55), c.partner.opacity(0.30)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+        case .solid:
+            c.base.mix(with: .black, by: 0.72)
+        case .starfield:
+            ZStack {
+                LinearGradient(colors: [.black, c.base.mix(with: .black, by: 0.85)],
+                               startPoint: .top, endPoint: .bottom)
+                Starfield(color: c.accent)
+                RadialGradient(colors: [c.base.opacity(0.18), .clear],
+                               center: .center, startRadius: 10, endRadius: 600)
+            }
+        case .image:
+            ZStack {
+                Color.black
+                if let path = style.imagePath, let img = NSImage(contentsOfFile: path) {
+                    Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+                }
+                Color.black.opacity(0.45)
+            }
+        }
+    }
+}
+
+/// Slow color-tinted mesh (curtain flavor of AuroraBackground).
+private struct CurtainAurora: View {
+    var color: ThemeColor
+    private var colors: [Color] {
+        let a = color.base, b = color.partner, d = color.accent
+        return [b, a, d, a, b, a, d, a, b]
+    }
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            MeshGradient(width: 3, height: 3, points: points(t), colors: colors)
+                .blur(radius: 40)
+        }
+    }
+    private func points(_ t: TimeInterval) -> [SIMD2<Float>] {
+        func o(_ amp: Double, _ speed: Double, _ phase: Double) -> Float { Float(amp * sin(t * speed + phase)) }
+        return [
+            [0, 0], [0.5 + o(0.10, 0.42, 0), 0], [1, 0],
+            [0, 0.5 + o(0.10, 0.37, 1)], [0.5 + o(0.12, 0.31, 2), 0.5 + o(0.12, 0.53, 3)], [1, 0.5 + o(0.10, 0.47, 4)],
+            [0, 1], [0.5 + o(0.10, 0.40, 5), 1], [1, 1],
+        ]
+    }
+}
+
+private func cfrac(_ x: Double) -> Double { x - floor(x) }
+
+/// Drifting star field, tinted by the accent color.
+private struct Starfield: View {
+    var color: Color
+    private let stars: [(x: Double, y: Double, r: Double, spd: Double)] = (0..<90).map { i in
+        let a = Double(i) + 1
+        return (x: cfrac(sin(a * 12.9898) * 43758.5453),
+                y: cfrac(sin(a * 78.233) * 12345.678),
+                r: 0.7 + 2.2 * cfrac(sin(a * 3.17) * 991.0),
+                spd: 0.5 + cfrac(sin(a * 5.51) * 217.0))
+    }
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            Canvas { g, size in
+                for s in stars {
+                    let y = cfrac(s.y + t * 0.02 * s.spd)
+                    let rect = CGRect(x: s.x * size.width, y: y * size.height, width: s.r, height: s.r)
+                    g.fill(Path(ellipseIn: rect), with: .color(color.opacity(0.55)))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Stage (backdrop + glyph + message)
+
+/// The full visual, sized to fill whatever frame it's given. Used at screen
+/// size in the window and scaled down in the settings preview.
+struct CurtainStage: View {
+    var style: CurtainStyle
+    var message: String
+    var showHint: Bool
+    var animate: Bool = true
 
     @State private var pulse = false
-    @State private var code = ""
-    @State private var shake: CGFloat = 0
-    @FocusState private var focused: Bool
 
     var body: some View {
         ZStack {
-            // Deep, calm backdrop with a faint brand glow.
-            LinearGradient(colors: [.black, Color(red: 0.04, green: 0.05, blue: 0.09)],
-                           startPoint: .top, endPoint: .bottom)
-            RadialGradient(colors: [Brand.blue.opacity(0.22), .clear],
-                           center: .center, startRadius: 5, endRadius: 620)
+            CurtainBackdrop(style: style)
 
             VStack(spacing: 22) {
                 ZStack {
-                    Circle().fill(Brand.blue.opacity(0.16))
+                    Circle().fill(style.color.base.opacity(0.16))
                         .frame(width: 128, height: 128)
                         .scaleEffect(pulse ? 1.12 : 0.94)
-                    Image(systemName: "hand.raised.fill")
+                    Image(systemName: style.glyph)
                         .font(.system(size: 54, weight: .semibold))
-                        .foregroundStyle(Brand.gradient)
+                        .foregroundStyle(style.color.gradient)
                 }
-                .animation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true), value: pulse)
+                .animation(animate ? .easeInOut(duration: 1.8).repeatForever(autoreverses: true) : nil, value: pulse)
 
                 VStack(spacing: 8) {
-                    Text(curtain.message)
+                    Text(message)
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
@@ -250,21 +439,62 @@ private struct CurtainView: View {
                 }
                 .frame(maxWidth: 640)
 
-                if primary {
-                    if curtain.unlocking {
-                        passcodeCard
-                    } else {
-                        Label("Press ⌃⌥⌘U to unlock", systemImage: "lock.fill")
-                            .font(.callout)
-                            .foregroundStyle(.white.opacity(0.4))
-                            .padding(.top, 8)
-                    }
+                if showHint {
+                    Label("Press ⌃⌥⌘U to unlock", systemImage: "lock.fill")
+                        .font(.callout)
+                        .foregroundStyle(.white.opacity(0.4))
+                        .padding(.top, 8)
                 }
             }
             .padding(40)
         }
         .ignoresSafeArea()
-        .onAppear { pulse = true }
+        .onAppear { if animate { pulse = true } }
+    }
+}
+
+// MARK: - Live preview (for Settings)
+
+/// A scaled, rounded preview that mirrors the current style + message live.
+struct CurtainPreview: View {
+    @ObservedObject var curtain: PrivacyCurtain
+    var body: some View {
+        GeometryReader { geo in
+            let s = geo.size.width / 1440
+            CurtainStage(style: curtain.style, message: curtain.message, showHint: curtain.style.showHint)
+                .frame(width: 1440, height: 900)
+                .scaleEffect(s, anchor: .topLeading)
+        }
+        .aspectRatio(1440.0 / 900.0, contentMode: .fit)
+        .frame(maxWidth: 400)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(0.12)))
+    }
+}
+
+// MARK: - Window content
+
+private struct CurtainView: View {
+    @ObservedObject var curtain: PrivacyCurtain
+    var primary: Bool
+
+    @State private var code = ""
+    @State private var shake: CGFloat = 0
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ZStack {
+            CurtainStage(style: curtain.style,
+                         message: curtain.message,
+                         showHint: curtain.style.showHint && !(primary && curtain.unlocking))
+
+            if primary && curtain.unlocking {
+                VStack {
+                    Spacer()
+                    passcodeCard.padding(.bottom, 90)
+                }
+            }
+        }
         .onChange(of: curtain.unlocking) { _, now in
             if now { focused = true } else { code = "" }
         }
@@ -295,6 +525,5 @@ private struct CurtainView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.12)))
         .offset(x: shake == 0 ? 0 : -10)
-        .padding(.top, 8)
     }
 }

@@ -23,11 +23,16 @@ enum ThemeStyle: String, CaseIterable, Identifiable {
 
 // MARK: - Colors
 
-enum ThemeColor: String, CaseIterable, Identifiable {
+enum ThemeColor: String, CaseIterable, Identifiable, Codable {
     case blue, purple, pink, red, orange, green
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
+
+    /// Diagonal gradient of this color (base → partner).
+    var gradient: LinearGradient {
+        LinearGradient(colors: [base, partner], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
 
     private static func rgb(_ r: Double, _ g: Double, _ b: Double) -> Color {
         Color(red: r, green: g, blue: b)
