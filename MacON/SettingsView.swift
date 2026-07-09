@@ -14,10 +14,12 @@ struct SettingsView: View {
     @EnvironmentObject private var pipelines: PipelinePool
     @EnvironmentObject private var companion: CompanionManager
     @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var curtain: PrivacyCurtain
     @Environment(\.dismiss) private var dismiss
     @State private var secretRows: [SecretRow] = []
     @State private var exportWithSecrets = false
     @State private var showPairing = false
+    @State private var newPasscode = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,6 +31,7 @@ struct SettingsView: View {
                 secretsSection
                 portableSection
                 companionSection
+                privacyScreenSection
                 cleanupSection
             }
             .formStyle(.grouped)
@@ -200,6 +203,54 @@ struct SettingsView: View {
                      systemImage: "exclamationmark.triangle.fill", tint: Brand.amber)
             }
         } header: { FormSectionHeader(title: "Companion app", systemImage: "ipad.and.iphone", tint: Brand.blue) }
+    }
+
+    private var privacyScreenSection: some View {
+        Section {
+            caption("Cover this Mac's screen with a “don't touch” wall while you keep "
+                    + "using it from a paired device — the companion still sees and controls "
+                    + "the real screen. It's a privacy curtain, not a lock: it deters a "
+                    + "passerby, but isn't a security boundary.")
+
+            TextField("Wall message", text: $curtain.message)
+                .textFieldStyle(.roundedBorder)
+
+            // Optional dismiss passcode.
+            HStack(spacing: 8) {
+                SecureField(curtain.hasPasscode ? "Change passcode" : "Set a passcode (optional)",
+                            text: $newPasscode)
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                Button("Save") {
+                    curtain.setPasscode(newPasscode); newPasscode = ""
+                }
+                .buttonStyle(SoftButtonStyle())
+                .disabled(newPasscode.isEmpty)
+                if curtain.hasPasscode {
+                    Button(role: .destructive) { curtain.clearPasscode() } label: {
+                        Image(systemName: "trash").foregroundStyle(Brand.rose)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Remove passcode")
+                }
+            }
+            if curtain.hasPasscode {
+                Pill(text: "Passcode required to unlock", systemImage: "lock.fill", tint: Brand.emerald)
+            } else {
+                Pill(text: "No passcode — anyone can unlock with the hot key",
+                     systemImage: "lock.open.fill", tint: Brand.amber)
+            }
+
+            HStack {
+                Button {
+                    curtain.raise(); dismiss()
+                } label: { Label("Raise Privacy Screen", systemImage: "hand.raised.fill") }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(curtain.isUp)
+                Spacer()
+                Pill(text: "Unlock with ⌃⌥⌘U", systemImage: "keyboard", tint: Brand.cyan)
+            }
+        } header: { FormSectionHeader(title: "Privacy screen", systemImage: "hand.raised.fill", tint: Brand.indigo) }
     }
 
     private var cleanupSection: some View {

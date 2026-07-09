@@ -37,6 +37,10 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private let keyframeLock = NSLock()
     private var pendingKeyframe = true         // first frame is always a keyframe
 
+    private let exclLock = NSLock()
+    private var excludedIDs: [CGWindowID] = []  // windows kept OUT of the capture (e.g. privacy curtain)
+    private var display: SCDisplay?             // remembered so the filter can be rebuilt live
+
     init(fps: Int = 60, maxWidth: Int = 2560, publish: @escaping @Sendable (Data) -> Void) {
         self.fps = fps
         self.maxWidth = maxWidth
@@ -68,6 +72,31 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         Task { await begin() }
     }
 
+    /// Set which windows to exclude from the capture. Applies live if running.
+    func setExcludedWindows(_ ids: [CGWindowID]) {
+        exclLock.lock(); excludedIDs = ids; exclLock.unlock()
+        if stream != nil { Task { await refreshFilter() } }
+    }
+
+    private func currentExcludedIDs() -> [CGWindowID] {
+        exclLock.lock(); defer { exclLock.unlock() }; return excludedIDs
+    }
+
+    /// Rebuild the content filter (e.g. after the excluded-window set changed).
+    private func refreshFilter() async {
+        guard let stream, let display else { return }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            let ids = currentExcludedIDs()
+            let excluded = content.windows.filter { ids.contains($0.windowID) }
+            let filter = SCContentFilter(display: display, excludingWindows: excluded)
+            try await stream.updateContentFilter(filter)
+            forceKeyframe()
+        } catch {
+            NSLog("MacOn: couldn't update capture filter — \(error.localizedDescription)")
+        }
+    }
+
     func start() { Task { await begin() } }
 
     func forceKeyframe() {
@@ -85,6 +114,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let display = content.displays.first else { return }
+            self.display = display
 
             // Capture at native (Retina) pixels, not points, so text stays crisp —
             // SCDisplay.width is in points; the real backing store is larger.
@@ -96,7 +126,9 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
 
             setupEncoder(width: Int32(w), height: Int32(h))
 
-            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let excludedIDs = currentExcludedIDs()
+            let excludedWindows = content.windows.filter { excludedIDs.contains($0.windowID) }
+            let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
             let config = SCStreamConfiguration()
             config.width = w
             config.height = h
