@@ -31,12 +31,28 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private var session: VTCompressionSession?
 
     private let maxWidth = 2560                 // cap on the captured native-pixel width
-    private let targetFPS: Int32 = 60          // encoder hint; capture allows up to 120
+    private var fps: Int                        // target frame rate (30 / 60 / 120)
+    private var config: SCStreamConfiguration?  // kept so fps can be changed live
 
     private let keyframeLock = NSLock()
     private var pendingKeyframe = true         // first frame is always a keyframe
 
-    init(publish: @escaping @Sendable (Data) -> Void) { self.publish = publish }
+    init(fps: Int = 60, publish: @escaping @Sendable (Data) -> Void) {
+        self.fps = fps
+        self.publish = publish
+    }
+
+    /// Change the capture + encoder frame rate on the fly.
+    func setFrameRate(_ newFPS: Int) {
+        fps = newFPS
+        if let session {
+            VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: newFPS as CFNumber)
+        }
+        if let config, let stream {
+            config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(newFPS))
+            stream.updateConfiguration(config) { _ in }
+        }
+    }
 
     func start() { Task { await begin() } }
 
@@ -70,12 +86,13 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             let config = SCStreamConfiguration()
             config.width = w
             config.height = h
-            config.minimumFrameInterval = CMTime(value: 1, timescale: 120)   // allow up to 120 fps
-            config.queueDepth = 6
+            config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
+            config.queueDepth = 5
             config.showsCursor = true
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.captureResolution = .best                                 // highest fidelity
             config.colorSpaceName = CGColorSpace.sRGB                        // keep screen colors
+            self.config = config
 
             let s = SCStream(filter: filter, configuration: config, delegate: nil)
             try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
@@ -111,7 +128,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 120 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 2 as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: targetFPS as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
         // Higher bitrate so text/edges stay sharp (screen content is detail-heavy).
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 45_000_000 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: 0.85 as CFNumber)

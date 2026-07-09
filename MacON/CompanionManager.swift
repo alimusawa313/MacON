@@ -82,7 +82,12 @@ final class CompanionManager: ObservableObject {
             screen: broadcaster,
             control: { [weak self] event in
                 Task { @MainActor in
-                    guard let self, self.allowControl else { return }
+                    guard let self else { return }
+                    if event.t == "fps" {                       // stream setting — always allowed
+                        if let f = event.code { self.setStreamFPS(f) }
+                        return
+                    }
+                    guard self.allowControl else { return }
                     self.remote.handle(event)
                 }
             },
@@ -107,13 +112,21 @@ final class CompanionManager: ObservableObject {
     func setScreenCapture(_ active: Bool) {
         if active && shareScreen {
             guard streamer == nil else { return }
-            let s = ScreenStreamer(publish: { [broadcaster] packet in broadcaster.publish(packet) })
+            let s = ScreenStreamer(fps: streamFPS, publish: { [broadcaster] packet in broadcaster.publish(packet) })
             s.start()
             streamer = s
         } else {
             streamer?.stop()
             streamer = nil
         }
+    }
+
+    /// Requested stream frame rate (persists; applies live if capturing).
+    private(set) var streamFPS: Int = 60
+    func setStreamFPS(_ fps: Int) {
+        let clamped = [30, 60, 120].contains(fps) ? fps : 60
+        streamFPS = clamped
+        streamer?.setFrameRate(clamped)
     }
 
     // MARK: Pairing
