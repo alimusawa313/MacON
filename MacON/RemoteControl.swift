@@ -31,6 +31,8 @@ final class RemoteControl {
         switch e.t {
         case "move":
             if let p = point(e) { move(to: p) }
+        case "movedelta":
+            moveBy(dx: e.dx ?? 0, dy: e.dy ?? 0)
         case "click":
             let p = point(e) ?? lastPoint
             click(at: p, right: e.button == "right", count: max(1, e.count ?? 1), mods: e.mods ?? [])
@@ -67,6 +69,17 @@ final class RemoteControl {
         lastPoint = p
         CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
             .post(tap: .cghidEventTap)
+    }
+
+    /// Trackpad-style relative move: nudge the current cursor by (dx, dy), with a
+    /// little gain, clamped to the main display.
+    private func moveBy(dx: Double, dy: Double) {
+        let gain = 1.8
+        let current = CGEvent(source: nil)?.location ?? lastPoint
+        let b = CGDisplayBounds(CGMainDisplayID())
+        let x = min(max(b.minX, current.x + dx * gain), b.maxX - 1)
+        let y = min(max(b.minY, current.y + dy * gain), b.maxY - 1)
+        move(to: CGPoint(x: x, y: y))
     }
 
     private func click(at p: CGPoint, right: Bool, count: Int, mods: [String] = []) {
