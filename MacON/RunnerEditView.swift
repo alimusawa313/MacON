@@ -15,8 +15,23 @@ struct RunnerEditView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                IconTile(systemImage: "server.rack", gradient: LinearGradient(colors: [Brand.indigo, Brand.blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Edit Runner").font(.title2.weight(.bold))
+                    Text(agent.instance.name.isEmpty ? "New runner" : agent.instance.name)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(18)
+            .background {
+                LinearGradient(colors: [Brand.indigo.opacity(0.16), .clear], startPoint: .leading, endPoint: .trailing)
+                    .background(.regularMaterial)
+            }
+
             Form {
-                Section("Runner") {
+                Section {
                     TextField("Name", text: $agent.instance.name)
 
                     VStack(alignment: .leading, spacing: 6) {
@@ -35,6 +50,7 @@ struct RunnerEditView: View {
                             TextField("", text: $agent.instance.workingDirectory)
                                 .textFieldStyle(.roundedBorder)
                             Button("Choose…") { chooseDir() }
+                                .buttonStyle(SoftButtonStyle())
                         }
                     }
                     Text("Give each runner its own directory so their checkouts don't collide.")
@@ -42,22 +58,22 @@ struct RunnerEditView: View {
 
                     Toggle("Restart automatically if it crashes",
                            isOn: $agent.instance.restartOnCrash)
-                }
+                } header: { FormSectionHeader(title: "Runner", systemImage: "server.rack", tint: Brand.indigo) }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
 
-            Divider()
             HStack {
                 Spacer()
-                Button("Done") {
-                    pool.commitEdits()
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
+                Button("Done") { pool.commitEdits(); dismiss() }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .keyboardShortcut(.defaultAction)
             }
-            .padding()
+            .padding(16)
+            .background(.bar)
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 520, height: 480)
+        .background(.regularMaterial)
     }
 
     private func chooseDir() {
