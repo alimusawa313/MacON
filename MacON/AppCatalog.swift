@@ -21,7 +21,7 @@ enum AppCatalog {
         return CompanionAppsDTO(apps: apps)
     }
 
-    private static func iconBase64(_ path: String, px: CGFloat = 48) -> String? {
+    private static func iconBase64(_ path: String, px: CGFloat = 128) -> String? {
         let icon = NSWorkspace.shared.icon(forFile: path)
         let size = NSSize(width: px, height: px)
         guard let rep = NSBitmapImageRep(
