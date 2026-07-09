@@ -32,7 +32,7 @@ final class RemoteControl {
             if let p = point(e) { move(to: p) }
         case "click":
             let p = point(e) ?? lastPoint
-            click(at: p, right: e.button == "right", count: max(1, e.count ?? 1))
+            click(at: p, right: e.button == "right", count: max(1, e.count ?? 1), mods: e.mods ?? [])
         case "scroll":
             scroll(dx: e.dx ?? 0, dy: e.dy ?? 0)
         case "text":
@@ -63,15 +63,18 @@ final class RemoteControl {
             .post(tap: .cghidEventTap)
     }
 
-    private func click(at p: CGPoint, right: Bool, count: Int) {
+    private func click(at p: CGPoint, right: Bool, count: Int, mods: [String] = []) {
         lastPoint = p
         let down: CGEventType = right ? .rightMouseDown : .leftMouseDown
         let up: CGEventType = right ? .rightMouseUp : .leftMouseUp
         let button: CGMouseButton = right ? .right : .left
-        for e in [down, up] {
-            let ev = CGEvent(mouseEventSource: nil, mouseType: e, mouseCursorPosition: p, mouseButton: button)
-            ev?.setIntegerValueField(.mouseEventClickState, value: Int64(count))
-            ev?.post(tap: .cghidEventTap)
+        holdingModifiers(mods) { flags in
+            for e in [down, up] {
+                let ev = CGEvent(mouseEventSource: nil, mouseType: e, mouseCursorPosition: p, mouseButton: button)
+                ev?.setIntegerValueField(.mouseEventClickState, value: Int64(count))
+                if !flags.isEmpty { ev?.flags = flags }
+                ev?.post(tap: .cghidEventTap)
+            }
         }
     }
 
@@ -96,24 +99,30 @@ final class RemoteControl {
 
     /// Press a shortcut chord (e.g. Ctrl+→ to switch spaces, like a 3-finger
     /// swipe). System gestures such as Mission Control often ignore a flags-only
-    /// synthetic event, so we press the real modifier keys around the arrow.
+    /// synthetic event, so we press the real modifier keys around the key.
     private func press(_ code: CGKeyCode, mods: [String]) {
-        var flags: CGEventFlags = []
-        var modKeys: [CGKeyCode] = []
-        if mods.contains("cmd")   { flags.insert(.maskCommand);   modKeys.append(55) }  // ⌘
-        if mods.contains("ctrl")  { flags.insert(.maskControl);   modKeys.append(59) }  // ⌃
-        if mods.contains("opt")   { flags.insert(.maskAlternate); modKeys.append(58) }  // ⌥
-        if mods.contains("shift") { flags.insert(.maskShift);     modKeys.append(56) }  // ⇧
+        holdingModifiers(mods) { flags in
+            for down in [true, false] {
+                let ev = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
+                ev?.flags = flags; ev?.post(tap: .cghidEventTap)
+            }
+        }
+    }
 
-        for m in modKeys {                                   // modifiers down
+    /// Hold the given modifiers (real key events) for the duration of `body`.
+    private func holdingModifiers(_ mods: [String], _ body: (CGEventFlags) -> Void) {
+        var flags: CGEventFlags = []
+        var keys: [CGKeyCode] = []
+        if mods.contains("cmd")   { flags.insert(.maskCommand);   keys.append(55) }  // ⌘
+        if mods.contains("ctrl")  { flags.insert(.maskControl);   keys.append(59) }  // ⌃
+        if mods.contains("opt")   { flags.insert(.maskAlternate); keys.append(58) }  // ⌥
+        if mods.contains("shift") { flags.insert(.maskShift);     keys.append(56) }  // ⇧
+        for m in keys {
             let ev = CGEvent(keyboardEventSource: nil, virtualKey: m, keyDown: true)
             ev?.flags = flags; ev?.post(tap: .cghidEventTap)
         }
-        for down in [true, false] {                          // key down, then up
-            let ev = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
-            ev?.flags = flags; ev?.post(tap: .cghidEventTap)
-        }
-        for m in modKeys.reversed() {                        // modifiers up
+        body(flags)
+        for m in keys.reversed() {
             let ev = CGEvent(keyboardEventSource: nil, virtualKey: m, keyDown: false)
             ev?.post(tap: .cghidEventTap)
         }
