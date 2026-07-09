@@ -126,6 +126,12 @@ struct SettingsView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    Toggle("Let paired devices view this screen", isOn: $companion.shareScreen)
+                    if companion.shareScreen {
+                        Text("macOS will ask for Screen Recording permission the first "
+                             + "time a device opens the screen view.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Per-runner cleanup (on stop)") {
