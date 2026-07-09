@@ -19,6 +19,7 @@ struct ContentView: View {
     @EnvironmentObject private var pool: RunnerPool
     @EnvironmentObject private var pipelines: PipelinePool
     @EnvironmentObject private var companion: CompanionManager
+    @EnvironmentObject private var theme: ThemeManager
     @State private var selection: SidebarSelection?
     @State private var showSettings = false
 
@@ -48,8 +49,13 @@ struct ContentView: View {
         } detail: {
             detail
         }
+        // Re-skin the whole nav tree when the theme changes, without disturbing
+        // ContentView's own state (so an open Settings sheet stays put).
+        .id(theme.token)
         .sheet(isPresented: $showSettings) {
-            SettingsView().environmentObject(pool).environmentObject(pipelines).environmentObject(companion)
+            SettingsView()
+                .environmentObject(pool).environmentObject(pipelines)
+                .environmentObject(companion).environmentObject(theme)
         }
         .task { await pool.refreshReclaimable() }
     }

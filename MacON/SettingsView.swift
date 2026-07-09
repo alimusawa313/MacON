@@ -13,6 +13,7 @@ struct SettingsView: View {
     @EnvironmentObject private var pool: RunnerPool
     @EnvironmentObject private var pipelines: PipelinePool
     @EnvironmentObject private var companion: CompanionManager
+    @EnvironmentObject private var theme: ThemeManager
     @Environment(\.dismiss) private var dismiss
     @State private var secretRows: [SecretRow] = []
     @State private var exportWithSecrets = false
@@ -22,6 +23,7 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             header
             Form {
+                appearanceSection
                 bitbucketSection
                 githubSection
                 secretsSection
@@ -79,6 +81,14 @@ struct SettingsView: View {
     }
 
     // MARK: Sections
+
+    private var appearanceSection: some View {
+        Section {
+            caption("Choose a fill style and an accent color. Applies instantly and is remembered.")
+            ThemeControls()
+                .padding(.vertical, 4)
+        } header: { FormSectionHeader(title: "Appearance", systemImage: "paintpalette.fill", tint: Brand.blue) }
+    }
 
     private var bitbucketSection: some View {
         Section {
