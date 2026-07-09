@@ -222,6 +222,7 @@ private struct StepRow: View {
     let isOpen: Bool
     let toggle: () -> Void
     @State private var hover = false
+    @State private var copied = false
 
     private var tint: Color {
         if section.failed { return Brand.rose }
@@ -239,29 +240,28 @@ private struct StepRow: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Button(action: toggle) {
-                HStack(spacing: 11) {
-                    node
-                    Text(section.title)
-                        .font(.system(.callout, design: .rounded).weight(.semibold))
-                        .lineLimit(1).truncationMode(.middle)
-                        .foregroundStyle(.primary)
-                    Spacer(minLength: 8)
-                    Text(formatDuration(section.duration))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(.quaternary, in: Capsule())
-                    Text("\(section.lines.count)")
-                        .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
-                        .frame(minWidth: 24, alignment: .trailing)
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
-                }
-                .padding(.horizontal, 12).padding(.vertical, 10)
-                .contentShape(Rectangle())
+            HStack(spacing: 11) {
+                node
+                Text(section.title)
+                    .font(.system(.callout, design: .rounded).weight(.semibold))
+                    .lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                copyButton
+                Text(formatDuration(section.duration))
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+                Text("\(section.lines.count)")
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                    .frame(minWidth: 24, alignment: .trailing)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: toggle)
 
             if isOpen {
                 VStack(alignment: .leading, spacing: 1) {
@@ -283,6 +283,30 @@ private struct StepRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(.white.opacity(0.06)))
         .onHover { hover = $0 }
+    }
+
+    private var copyButton: some View {
+        Button {
+            copyStep()
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(copied ? Brand.emerald : .secondary)
+                .frame(width: 22, height: 22)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .opacity(hover || copied ? 1 : 0)
+        .help("Copy this step")
+    }
+
+    private func copyStep() {
+        let body = section.lines.map { $0.text.strippingANSI() }.joined(separator: "\n")
+        let text = body.isEmpty ? section.title : "\(section.title)\n\(body)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        withAnimation { copied = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { withAnimation { copied = false } }
     }
 
     private var node: some View {
