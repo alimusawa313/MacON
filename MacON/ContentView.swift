@@ -48,7 +48,6 @@ struct ContentView: View {
         } detail: {
             detail
         }
-        .navigationTitle("MacOn")
         .sheet(isPresented: $showSettings) {
             SettingsView().environmentObject(pool).environmentObject(pipelines).environmentObject(companion)
         }

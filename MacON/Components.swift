@@ -183,7 +183,7 @@ struct RawStringLog: View {
     }
 }
 
-// MARK: - Structured "Steps" view (Bitrise-style collapsible sections)
+// MARK: - Structured "Steps" view (CI-style step list)
 
 struct StructuredLog: View {
     let lines: [LogLine]
@@ -193,40 +193,74 @@ struct StructuredLog: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 4) {
+            LazyVStack(alignment: .leading, spacing: 6) {
                 ForEach(sections) { section in
-                    sectionView(section)
+                    StepRow(section: section, isOpen: expanded.contains(section.id)) {
+                        withAnimation(.spring(duration: 0.28)) {
+                            if expanded.contains(section.id) { expanded.remove(section.id) }
+                            else { expanded.insert(section.id) }
+                        }
+                    }
                 }
             }
-            .padding(10)
+            .padding(14)
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.55))
         .onAppear { autoExpandFailures() }
     }
 
-    @ViewBuilder
-    private func sectionView(_ section: LogSection) -> some View {
-        let isOpen = expanded.contains(section.id)
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                if isOpen { expanded.remove(section.id) } else { expanded.insert(section.id) }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                        .font(.caption2).foregroundStyle(.secondary).frame(width: 10)
-                    Image(systemName: icon(section)).foregroundStyle(color(section))
+    private func autoExpandFailures() {
+        for s in sections where s.failed { expanded.insert(s.id) }
+        if expanded.isEmpty, let last = sections.last { expanded.insert(last.id) }
+    }
+}
+
+/// One collapsible CI step: status node, accent stripe, duration pill, and a
+/// terminal-style body when expanded.
+private struct StepRow: View {
+    let section: LogSection
+    let isOpen: Bool
+    let toggle: () -> Void
+    @State private var hover = false
+
+    private var tint: Color {
+        if section.failed { return Brand.rose }
+        if section.succeeded { return Brand.emerald }
+        return .secondary
+    }
+    private var isTerminal: Bool { section.failed || section.succeeded }
+    private var kindIcon: String {
+        switch section.kind {
+        case .command: return "terminal"
+        case .step:    return "arrow.right"
+        case .phase:   return "hammer.fill"
+        case .output:  return "text.alignleft"
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: toggle) {
+                HStack(spacing: 11) {
+                    node
                     Text(section.title)
-                        .font(.system(.callout, design: .monospaced)).bold()
+                        .font(.system(.callout, design: .rounded).weight(.semibold))
                         .lineLimit(1).truncationMode(.middle)
-                    Spacer()
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
                     Text(formatDuration(section.duration))
-                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                    Text("· \(section.lines.count) lines")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                    Text("\(section.lines.count)")
+                        .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                        .frame(minWidth: 24, alignment: .trailing)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
                 }
-                .padding(.vertical, 5).padding(.horizontal, 8)
-                .background(color(section).opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -236,31 +270,55 @@ struct StructuredLog: View {
                         Text(l.text.strippingANSI())
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
+                            .foregroundStyle(lineColor(l.text))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .padding(.leading, 26).padding(.vertical, 4)
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.black.opacity(0.22))
             }
         }
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .fill(hover ? tint.opacity(0.1) : Color.primary.opacity(0.04)))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(tint.opacity(isTerminal ? 0.9 : 0.4))
+                .frame(width: 3).padding(.vertical, 7)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(.white.opacity(0.06)))
+        .onHover { hover = $0 }
     }
 
-    private func icon(_ s: LogSection) -> String {
-        if s.failed { return "xmark.circle.fill" }
-        if s.succeeded { return "checkmark.circle.fill" }
-        switch s.kind {
-        case .command: return "terminal"
-        case .step:    return "arrow.right.circle"
-        case .phase:   return "hammer"
-        case .output:  return "text.alignleft"
+    private var node: some View {
+        Group {
+            if section.failed {
+                badge(Brand.rose, "xmark")
+            } else if section.succeeded {
+                badge(Brand.emerald, "checkmark")
+            } else {
+                ZStack {
+                    Circle().strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1.5)
+                    Image(systemName: kindIcon)
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                }
+            }
         }
+        .frame(width: 24, height: 24)
     }
-    private func color(_ s: LogSection) -> Color {
-        if s.failed { return .red }
-        if s.succeeded { return .green }
-        return .secondary
+
+    private func badge(_ c: Color, _ symbol: String) -> some View {
+        Circle().fill(c.gradient)
+            .overlay(Image(systemName: symbol).font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
+            .shadow(color: c.opacity(0.5), radius: 3, y: 1)
     }
-    private func autoExpandFailures() {
-        for s in sections where s.failed { expanded.insert(s.id) }
-        if expanded.isEmpty, let last = sections.last { expanded.insert(last.id) }
+
+    private func lineColor(_ text: String) -> Color {
+        if text.contains("❌") || text.contains("error") || text.contains("failed") { return Brand.rose }
+        if text.hasPrefix("⚠︎") || text.contains("warning") { return Brand.amber }
+        if text.contains("✅") || text.hasPrefix("✓") { return Brand.emerald }
+        if text.hasPrefix("$") || text.hasPrefix("▸") { return .secondary }
+        return .primary
     }
 }

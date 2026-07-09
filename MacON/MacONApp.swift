@@ -21,6 +21,7 @@ struct MacONApp: App {
                 .environmentObject(pool)
                 .environmentObject(pipelines)
                 .environmentObject(companion)
+                .tint(Brand.blue)
                 .task {
                     // Bring the companion server back up if it was on last time.
                     if companion.startsAtLaunch && !companion.isRunning {
@@ -29,6 +30,7 @@ struct MacONApp: App {
                     }
                 }
         }
+        .windowStyle(.hiddenTitleBar)
 
         // Quick control from the menu bar.
         MenuBarExtra("MacON", systemImage: menuIcon) {
