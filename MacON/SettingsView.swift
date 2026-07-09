@@ -20,26 +20,30 @@ struct SettingsView: View {
     @State private var exportWithSecrets = false
     @State private var showPairing = false
     @State private var newPasscode = ""
+    @State private var selection: SettingsCategory = .appearance
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Form {
-                appearanceSection
-                bitbucketSection
-                githubSection
-                secretsSection
-                portableSection
-                companionSection
-                privacyScreenSection
-                cleanupSection
+            NavigationSplitView {
+                List(SettingsCategory.allCases, selection: $selection) { cat in
+                    Label {
+                        Text(cat.title)
+                    } icon: {
+                        CategoryIcon(symbol: cat.symbol, tint: cat.tint)
+                    }
+                    .tag(cat)
+                }
+                .navigationSplitViewColumnWidth(min: 196, ideal: 210, max: 240)
+                .listStyle(.sidebar)
+            } detail: {
+                detail
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
+            .navigationSplitViewStyle(.balanced)
 
+            Divider()
             footer
         }
-        .frame(width: 560, height: 720)
+        .frame(width: 760, height: 600)
         .background(.regularMaterial)
         .sheet(isPresented: $showPairing) { CompanionPairingView() }
         .task {
@@ -52,21 +56,22 @@ struct SettingsView: View {
 
     // MARK: Chrome
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            IconTile(systemImage: "gearshape.fill")
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Settings").font(.title2.weight(.bold))
-                Text("Accounts · secrets · companion · cleanup")
-                    .font(.caption).foregroundStyle(.secondary)
+    /// The right-hand pane: only the selected category's sections.
+    @ViewBuilder private var detail: some View {
+        Form {
+            switch selection {
+            case .appearance: appearanceSection
+            case .accounts:   bitbucketSection; githubSection
+            case .secrets:    secretsSection
+            case .companion:  companionSection
+            case .privacy:    privacyScreenSection
+            case .portable:   portableSection
+            case .cleanup:    cleanupSection
             }
-            Spacer()
         }
-        .padding(18)
-        .background {
-            LinearGradient(colors: [Brand.blue.opacity(0.16), .clear], startPoint: .leading, endPoint: .trailing)
-                .background(.regularMaterial)
-        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .navigationTitle(selection.title)
     }
 
     private var footer: some View {
@@ -458,5 +463,67 @@ struct SettingsView: View {
               let data = try? Data(contentsOf: url),
               let bundle = try? MaconExport.decoded(from: data) else { return }
         pipelines.importBundle(bundle, replaceExisting: false)
+    }
+}
+
+// MARK: - Categories
+
+/// The settings panes, in sidebar order — one focused screen each, the way
+/// System Settings splits things up.
+enum SettingsCategory: String, CaseIterable, Identifiable {
+    case appearance, accounts, secrets, companion, privacy, portable, cleanup
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .appearance: return "Appearance"
+        case .accounts:   return "Accounts"
+        case .secrets:    return "Global Secrets"
+        case .companion:  return "Companion"
+        case .privacy:    return "Privacy Screen"
+        case .portable:   return "Portable Config"
+        case .cleanup:    return "Cleanup"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .appearance: return "paintpalette.fill"
+        case .accounts:   return "person.crop.circle.fill"
+        case .secrets:    return "key.fill"
+        case .companion:  return "ipad.and.iphone"
+        case .privacy:    return "hand.raised.fill"
+        case .portable:   return "terminal.fill"
+        case .cleanup:    return "sparkles"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .appearance: return Brand.blue
+        case .accounts:   return Brand.indigo
+        case .secrets:    return Brand.amber
+        case .companion:  return Brand.blue
+        case .privacy:    return Brand.indigo
+        case .portable:   return Brand.cyan
+        case .cleanup:    return Brand.emerald
+        }
+    }
+}
+
+/// The small colored rounded-square glyph used in the sidebar, like the icons
+/// down the left of System Settings.
+private struct CategoryIcon: View {
+    let symbol: String
+    let tint: Color
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(tint.gradient)
+            .frame(width: 24, height: 24)
+            .overlay(
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+            )
     }
 }
