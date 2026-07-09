@@ -39,10 +39,9 @@ final class RemoteControl {
             if let s = e.s { type(s) }
         case "key":
             if let code = e.code { key(CGKeyCode(code), down: e.down ?? true) }
-        case "swipe":
-            // Three-finger swipe → switch spaces, like the Mac trackpad.
-            // Swipe left reveals the space to the right (Ctrl+→), and vice-versa.
-            if let d = e.s { spaceSwitch(right: d == "left") }
+        case "combo":
+            // A shortcut chord, e.g. Ctrl+→ (next space) or Ctrl+↑ (Mission Control).
+            if let code = e.code { press(CGKeyCode(code), mods: e.mods ?? []) }
         default:
             break
         }
@@ -95,13 +94,16 @@ final class RemoteControl {
         CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.post(tap: .cghidEventTap)
     }
 
-    /// Move one space right (Ctrl+→) or left (Ctrl+←) — Mission Control's default
-    /// shortcuts, matching a three-finger trackpad swipe.
-    private func spaceSwitch(right: Bool) {
-        let arrow: CGKeyCode = right ? 124 : 123          // → : ←
+    /// Press a key with modifier flags held, then release — a shortcut chord.
+    private func press(_ code: CGKeyCode, mods: [String]) {
+        var flags: CGEventFlags = []
+        if mods.contains("cmd")   { flags.insert(.maskCommand) }
+        if mods.contains("ctrl")  { flags.insert(.maskControl) }
+        if mods.contains("opt")   { flags.insert(.maskAlternate) }
+        if mods.contains("shift") { flags.insert(.maskShift) }
         for down in [true, false] {
-            let ev = CGEvent(keyboardEventSource: nil, virtualKey: arrow, keyDown: down)
-            ev?.flags = .maskControl
+            let ev = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
+            ev?.flags = flags
             ev?.post(tap: .cghidEventTap)
         }
     }
