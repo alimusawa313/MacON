@@ -30,7 +30,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private var stream: SCStream?
     private var session: VTCompressionSession?
 
-    private let maxWidth = 1920
+    private let maxWidth = 2560                 // cap on the captured native-pixel width
     private let targetFPS: Int32 = 60          // encoder hint; capture allows up to 120
 
     private let keyframeLock = NSLock()
@@ -55,8 +55,14 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let display = content.displays.first else { return }
-            let scale = min(1.0, Double(maxWidth) / Double(display.width))
-            let w = Int(Double(display.width) * scale), h = Int(Double(display.height) * scale)
+
+            // Capture at native (Retina) pixels, not points, so text stays crisp —
+            // SCDisplay.width is in points; the real backing store is larger.
+            let mode = CGDisplayCopyDisplayMode(display.displayID)
+            let pxW = mode?.pixelWidth ?? display.width
+            let pxH = mode?.pixelHeight ?? display.height
+            let scale = min(1.0, Double(maxWidth) / Double(pxW))
+            let w = Int((Double(pxW) * scale).rounded()), h = Int((Double(pxH) * scale).rounded())
 
             setupEncoder(width: Int32(w), height: Int32(h))
 
@@ -68,6 +74,8 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             config.queueDepth = 6
             config.showsCursor = true
             config.pixelFormat = kCVPixelFormatType_32BGRA
+            config.captureResolution = .best                                 // highest fidelity
+            config.colorSpaceName = CGColorSpace.sRGB                        // keep screen colors
 
             let s = SCStream(filter: filter, configuration: config, delegate: nil)
             try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
@@ -104,7 +112,16 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 120 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 2 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: targetFPS as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 20_000_000 as CFNumber)
+        // Higher bitrate so text/edges stay sharp (screen content is detail-heavy).
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: 45_000_000 as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: 0.85 as CFNumber)
+
+        // Tag the stream BT.709 so the decoder reproduces colors correctly.
+        // Without these the iPad guesses the matrix/range → washed-out colors.
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ColorPrimaries, value: kCVImageBufferColorPrimaries_ITU_R_709_2)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_TransferFunction, value: kCVImageBufferTransferFunction_ITU_R_709_2)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_YCbCrMatrix, value: kCVImageBufferYCbCrMatrix_ITU_R_709_2)
+
         VTCompressionSessionPrepareToEncodeFrames(session)
         self.session = session
     }
