@@ -39,6 +39,10 @@ final class RemoteControl {
             if let s = e.s { type(s) }
         case "key":
             if let code = e.code { key(CGKeyCode(code), down: e.down ?? true) }
+        case "swipe":
+            // Three-finger swipe → switch spaces, like the Mac trackpad.
+            // Swipe left reveals the space to the right (Ctrl+→), and vice-versa.
+            if let d = e.s { spaceSwitch(right: d == "left") }
         default:
             break
         }
@@ -89,5 +93,16 @@ final class RemoteControl {
 
     private func key(_ code: CGKeyCode, down: Bool) {
         CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.post(tap: .cghidEventTap)
+    }
+
+    /// Move one space right (Ctrl+→) or left (Ctrl+←) — Mission Control's default
+    /// shortcuts, matching a three-finger trackpad swipe.
+    private func spaceSwitch(right: Bool) {
+        let arrow: CGKeyCode = right ? 124 : 123          // → : ←
+        for down in [true, false] {
+            let ev = CGEvent(keyboardEventSource: nil, virtualKey: arrow, keyDown: down)
+            ev?.flags = .maskControl
+            ev?.post(tap: .cghidEventTap)
+        }
     }
 }
