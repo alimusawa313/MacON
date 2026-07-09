@@ -36,10 +36,15 @@ struct CompanionPairingView: View {
 
                 VStack(spacing: 6) {
                     labeled("Address", companion.address)
+                    if let remote = companion.tunnel.publicURL {
+                        labeled("Remote", remote.replacingOccurrences(of: "https://", with: ""))
+                    }
                     labeled("Code", code, mono: true)
                 }
 
-                Text("In the MacOn app on your iPhone or iPad: tap **Add runner**, then enter the address and code. Same Wi‑Fi as this Mac.")
+                Text(companion.tunnel.publicURL == nil
+                     ? "In the MacOn app on your iPhone or iPad: tap **Add runner**, then enter the address and code. Same Wi‑Fi as this Mac."
+                     : "Same Wi‑Fi: use the local address. From anywhere else: use the remote address.")
                     .font(.caption).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
