@@ -40,6 +40,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private let minBitrate = 4_000_000
     private let maxBitrate = 45_000_000
     private var cleanWindows = 0
+    private var throttled = false      // fps temporarily halved under heavy congestion
 
     private let keyframeLock = NSLock()
     private var pendingKeyframe = true         // first frame is always a keyframe
@@ -54,9 +55,14 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         self.publish = publish
     }
 
-    /// Change the capture + encoder frame rate on the fly.
+    /// Change the capture + encoder frame rate on the fly (user preference).
     func setFrameRate(_ newFPS: Int) {
         fps = newFPS
+        throttled = false
+        applyFrameRate(newFPS)
+    }
+
+    private func applyFrameRate(_ newFPS: Int) {
         if let session {
             VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: newFPS as CFNumber)
         }
@@ -67,7 +73,8 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     /// One adaptation window from the broadcaster's delivery stats. Congested →
-    /// cut bitrate 40% immediately; clean for 3 consecutive windows → step up 30%.
+    /// cut bitrate 40% immediately (and halve fps if it's severe); clean for 3
+    /// consecutive windows → step back up.
     func adapt(sent: Int, dropped: Int) {
         let total = sent + dropped
         guard total > 0 else { return }
@@ -81,8 +88,17 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
                 NSLog("MacOn: link congested (%.0f%% dropped) — bitrate → %d Mbps",
                       dropRate * 100, bitrate / 1_000_000)
             }
+            // Severe congestion: fewer, better frames beat a drop/resync storm.
+            if dropRate > 0.25, !throttled, fps > 30 {
+                throttled = true
+                applyFrameRate(30)
+            }
         } else if dropRate < 0.02 {
             cleanWindows += 1
+            if throttled, cleanWindows >= 2 {
+                throttled = false
+                applyFrameRate(fps)                       // restore user preference
+            }
             if cleanWindows >= 3, bitrate < maxBitrate {
                 cleanWindows = 0
                 bitrate = min(maxBitrate, Int(Double(bitrate) * 1.3))
@@ -97,9 +113,10 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         guard let session else { return }
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate,
                              value: bitrate as CFNumber)
-        // Hard cap on bursts (1.5× average over 1s) so keyframes can't spike
-        // the link into a stall.
-        let limits: [Int] = [Int(Double(bitrate) * 1.5 / 8), 1]
+        // Burst cap: 2× average over 1s. Full-screen motion (Mission Control)
+        // legitimately needs short bursts — cap it loosely so quality doesn't
+        // crater, while still bounding runaway spikes.
+        let limits: [Int] = [Int(Double(bitrate) * 2.0 / 8), 1]
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
                              value: limits as CFArray)
     }
@@ -222,7 +239,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
-                             value: [Int(Double(bitrate) * 1.5 / 8), 1] as CFArray)
+                             value: [Int(Double(bitrate) * 2.0 / 8), 1] as CFArray)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: 0.85 as CFNumber)
 
         // Tag the stream BT.709 so the decoder reproduces colors correctly.
