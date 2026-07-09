@@ -116,6 +116,7 @@ final class CompanionManager: ObservableObject {
                     self.remote.handle(event)
                 }
             },
+            apps: { AppCatalog.list() },
             onLog: { _ in })
         svc.start()
         service = svc
