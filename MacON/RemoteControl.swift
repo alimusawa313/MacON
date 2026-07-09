@@ -25,6 +25,7 @@ final class RemoteControl {
     }
 
     private var lastPoint: CGPoint = .zero
+    private var heldButton: CGMouseButton?     // set while a companion mouse button is down
 
     func handle(_ e: ControlEvent) {
         guard AXIsProcessTrusted() else { return }
@@ -33,6 +34,10 @@ final class RemoteControl {
             if let p = point(e) { move(to: p) }
         case "movedelta":
             moveBy(dx: e.dx ?? 0, dy: e.dy ?? 0)
+        case "mouse":
+            // True button down/up at the current cursor — enables click-drag
+            // (hold the companion's Left/Right button while moving).
+            mouseButton(right: e.button == "right", down: e.down ?? true)
         case "click":
             let p = point(e) ?? lastPoint
             click(at: p, right: e.button == "right", count: max(1, e.count ?? 1), mods: e.mods ?? [])
@@ -67,7 +72,25 @@ final class RemoteControl {
 
     private func move(to p: CGPoint) {
         lastPoint = p
-        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
+        // While a button is held, movement must be a *dragged* event or macOS
+        // won't treat it as a drag (selection, window moves, DnD…).
+        let type: CGEventType = heldButton == .right ? .rightMouseDragged
+                              : heldButton == .left ? .leftMouseDragged
+                              : .mouseMoved
+        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p,
+                mouseButton: heldButton ?? .left)?
+            .post(tap: .cghidEventTap)
+    }
+
+    /// Press or release a mouse button at the current cursor position.
+    private func mouseButton(right: Bool, down: Bool) {
+        let button: CGMouseButton = right ? .right : .left
+        let type: CGEventType = right ? (down ? .rightMouseDown : .rightMouseUp)
+                                      : (down ? .leftMouseDown : .leftMouseUp)
+        let p = CGEvent(source: nil)?.location ?? lastPoint
+        lastPoint = p
+        heldButton = down ? button : nil
+        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: button)?
             .post(tap: .cghidEventTap)
     }
 
