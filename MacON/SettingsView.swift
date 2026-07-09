@@ -217,11 +217,26 @@ struct SettingsView: View {
                 .padding(.vertical, 2)
 
             // Background style.
-            Picker("Background", selection: $curtain.style.background) {
-                ForEach(CurtainBackground.allCases) { Text($0.title).tag($0) }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Background").font(.caption).foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+                    ForEach(CurtainBackground.allCases) { bg in
+                        let on = curtain.style.background == bg
+                        Label(bg.title, systemImage: bg.symbol)
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(on ? AnyShapeStyle(curtain.style.color.gradient) : AnyShapeStyle(.regularMaterial),
+                                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            .foregroundStyle(on ? .white : .primary)
+                            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .strokeBorder(.white.opacity(on ? 0.25 : 0.08)))
+                            .contentShape(Rectangle())
+                            .onTapGesture { withAnimation(.spring(duration: 0.3)) { curtain.style.background = bg } }
+                    }
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
             if curtain.style.background == .image {
                 HStack(spacing: 10) {
@@ -277,7 +292,15 @@ struct SettingsView: View {
                 }
             }
 
+            // Symbol animation.
+            Picker("Symbol animation", selection: $curtain.style.glyphAnimation) {
+                ForEach(CurtainGlyphAnimation.allCases) { Text($0.title).tag($0) }
+            }
+
             Toggle("Show the “Press ⌃⌥⌘U to unlock” hint", isOn: $curtain.style.showHint)
+
+            Toggle("Reduce burn-in (slowly drifts the content)", isOn: $curtain.style.reduceBurnIn)
+            caption("Recommended if the wall may stay up for a long time on an OLED display.")
 
             TextField("Wall message", text: $curtain.message)
                 .textFieldStyle(.roundedBorder)

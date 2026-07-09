@@ -273,12 +273,30 @@ struct CurtainStyle: Codable, Equatable {
     var background: CurtainBackground = .aurora
     var color: ThemeColor = .blue
     var glyph: String = "hand.raised.fill"
+    var glyphAnimation: CurtainGlyphAnimation = .breathe
     var showHint: Bool = true
+    /// Burn-in protection: slowly drifts the bright foreground so no pixel
+    /// stays lit in one place. On by default — this wall may sit up for hours.
+    var reduceBurnIn: Bool = true
     var imagePath: String? = nil
+
+    init() {}
+
+    // Tolerant decoding so older saved styles (missing newer keys) still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        background     = try c.decodeIfPresent(CurtainBackground.self, forKey: .background) ?? .aurora
+        color          = try c.decodeIfPresent(ThemeColor.self, forKey: .color) ?? .blue
+        glyph          = try c.decodeIfPresent(String.self, forKey: .glyph) ?? "hand.raised.fill"
+        glyphAnimation = try c.decodeIfPresent(CurtainGlyphAnimation.self, forKey: .glyphAnimation) ?? .breathe
+        showHint       = try c.decodeIfPresent(Bool.self, forKey: .showHint) ?? true
+        reduceBurnIn   = try c.decodeIfPresent(Bool.self, forKey: .reduceBurnIn) ?? true
+        imagePath      = try c.decodeIfPresent(String.self, forKey: .imagePath)
+    }
 }
 
 enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
-    case aurora, gradient, solid, starfield, image
+    case aurora, gradient, solid, starfield, waves, orbs, rays, image
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -286,6 +304,9 @@ enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
         case .gradient:  return "Gradient"
         case .solid:     return "Solid"
         case .starfield: return "Stars"
+        case .waves:     return "Waves"
+        case .orbs:      return "Orbs"
+        case .rays:      return "Rays"
         case .image:     return "Image"
         }
     }
@@ -295,7 +316,43 @@ enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
         case .gradient:  return "square.fill.on.circle.fill"
         case .solid:     return "square.fill"
         case .starfield: return "sparkle"
+        case .waves:     return "water.waves"
+        case .orbs:      return "circle.hexagongrid.fill"
+        case .rays:      return "rays"
         case .image:     return "photo.fill"
+        }
+    }
+}
+
+/// SF Symbol animation applied to the wall's glyph.
+enum CurtainGlyphAnimation: String, CaseIterable, Identifiable, Codable {
+    case none, breathe, pulse, bounce, wiggle, rotate, variableColor
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .none:          return "None"
+        case .breathe:       return "Breathe"
+        case .pulse:         return "Pulse"
+        case .bounce:        return "Bounce"
+        case .wiggle:        return "Wiggle"
+        case .rotate:        return "Rotate"
+        case .variableColor: return "Variable Color"
+        }
+    }
+}
+
+/// Applies the chosen SF Symbol effect.
+struct GlyphEffect: ViewModifier {
+    var kind: CurtainGlyphAnimation
+    @ViewBuilder func body(content: Content) -> some View {
+        switch kind {
+        case .none:          content
+        case .breathe:       content.symbolEffect(.breathe)
+        case .pulse:         content.symbolEffect(.pulse)
+        case .bounce:        content.symbolEffect(.bounce, options: .repeating)
+        case .wiggle:        content.symbolEffect(.wiggle, options: .repeating)
+        case .rotate:        content.symbolEffect(.rotate)
+        case .variableColor: content.symbolEffect(.variableColor.iterative)
         }
     }
 }
@@ -338,6 +395,22 @@ struct CurtainBackdrop: View {
                 Starfield(color: c.accent)
                 RadialGradient(colors: [c.base.opacity(0.18), .clear],
                                center: .center, startRadius: 10, endRadius: 600)
+            }
+        case .waves:
+            ZStack {
+                LinearGradient(colors: [.black, c.base.mix(with: .black, by: 0.8)],
+                               startPoint: .top, endPoint: .bottom)
+                CurtainWaves(color: c)
+            }
+        case .orbs:
+            ZStack {
+                Color.black
+                CurtainOrbs(color: c)
+            }
+        case .rays:
+            ZStack {
+                Color.black
+                CurtainRays(color: c)
             }
         case .image:
             ZStack {
@@ -401,6 +474,87 @@ private struct Starfield: View {
     }
 }
 
+/// Flowing stacked sine waves.
+private struct CurtainWaves: View {
+    var color: ThemeColor
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            Canvas { g, size in
+                let layers: [(Color, Double, Double, Double)] = [
+                    (color.base.opacity(0.30), 0.55, 0.35, 0.0),
+                    (color.partner.opacity(0.24), 0.68, 0.5, 1.7),
+                    (color.accent.opacity(0.18), 0.80, 0.28, 3.2),
+                ]
+                for (col, baseY, speed, phase) in layers {
+                    var path = Path()
+                    let midY = size.height * baseY
+                    let amp = size.height * 0.06
+                    path.move(to: CGPoint(x: 0, y: size.height))
+                    path.addLine(to: CGPoint(x: 0, y: midY))
+                    var x: CGFloat = 0
+                    while x <= size.width {
+                        let y = midY + amp * sin(Double(x) / size.width * 6.283 * 1.5 + t * speed + phase)
+                        path.addLine(to: CGPoint(x: x, y: y))
+                        x += 8
+                    }
+                    path.addLine(to: CGPoint(x: size.width, y: size.height))
+                    path.closeSubpath()
+                    g.fill(path, with: .color(col))
+                }
+            }
+        }
+    }
+}
+
+/// Big soft blurred orbs drifting slowly (bokeh).
+private struct CurtainOrbs: View {
+    var color: ThemeColor
+    private let seeds = Array(0..<6)
+    var body: some View {
+        GeometryReader { geo in
+            TimelineView(.animation) { ctx in
+                let t = ctx.date.timeIntervalSinceReferenceDate
+                ZStack {
+                    ForEach(seeds, id: \.self) { i in
+                        let a = Double(i) + 1
+                        let cols = [color.base, color.partner, color.accent]
+                        let dia = geo.size.height * (0.35 + 0.22 * cfrac(sin(a * 3.1) * 51.7))
+                        let x = (0.5 + 0.42 * sin(t * (0.05 + 0.02 * a) + a)) * geo.size.width
+                        let y = (0.5 + 0.40 * cos(t * (0.045 + 0.015 * a) + a * 1.3)) * geo.size.height
+                        Circle()
+                            .fill(cols[i % 3].opacity(0.28))
+                            .frame(width: dia, height: dia)
+                            .blur(radius: dia * 0.35)
+                            .position(x: x, y: y)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Slowly rotating conic glow.
+private struct CurtainRays: View {
+    var color: ThemeColor
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            AngularGradient(
+                gradient: Gradient(colors: [
+                    color.base.opacity(0.0), color.base.opacity(0.35),
+                    color.partner.opacity(0.0), color.accent.opacity(0.32),
+                    color.base.opacity(0.0),
+                ]),
+                center: .center,
+                angle: .degrees(t * 6))
+            .blur(radius: 60)
+            .overlay(RadialGradient(colors: [.clear, .black.opacity(0.6)],
+                                    center: .center, startRadius: 40, endRadius: 700))
+        }
+    }
+}
+
 // MARK: - Stage (backdrop + glyph + message)
 
 /// The full visual, sized to fill whatever frame it's given. Used at screen
@@ -412,44 +566,64 @@ struct CurtainStage: View {
     var animate: Bool = true
 
     @State private var pulse = false
+    @State private var driftX = false
+    @State private var driftY = false
+
+    private var drift: Bool { style.reduceBurnIn && animate }
 
     var body: some View {
         ZStack {
             CurtainBackdrop(style: style)
 
-            VStack(spacing: 22) {
-                ZStack {
-                    Circle().fill(style.color.base.opacity(0.16))
-                        .frame(width: 128, height: 128)
-                        .scaleEffect(pulse ? 1.12 : 0.94)
-                    Image(systemName: style.glyph)
-                        .font(.system(size: 54, weight: .semibold))
-                        .foregroundStyle(style.color.gradient)
-                }
-                .animation(animate ? .easeInOut(duration: 1.8).repeatForever(autoreverses: true) : nil, value: pulse)
-
-                VStack(spacing: 8) {
-                    Text(message)
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.center)
-                    Text("This Mac is being used remotely.")
-                        .font(.title3)
-                        .foregroundStyle(.white.opacity(0.55))
-                }
-                .frame(maxWidth: 640)
-
-                if showHint {
-                    Label("Press ⌃⌥⌘U to unlock", systemImage: "lock.fill")
-                        .font(.callout)
-                        .foregroundStyle(.white.opacity(0.4))
-                        .padding(.top, 8)
-                }
-            }
-            .padding(40)
+            // Burn-in protection: slowly drift the bright foreground so no pixel
+            // stays lit in a fixed spot. Two out-of-sync ~70–90s sweeps trace a
+            // slow 2-D path without re-rendering (which would disturb the glyph
+            // and pulse animations).
+            foreground
+                .offset(x: drift ? (driftX ? 26 : -26) : 0,
+                        y: drift ? (driftY ? 20 : -16) : 0)
+                .animation(.easeInOut(duration: 67).repeatForever(autoreverses: true), value: driftX)
+                .animation(.easeInOut(duration: 89).repeatForever(autoreverses: true), value: driftY)
         }
         .ignoresSafeArea()
-        .onAppear { if animate { pulse = true } }
+        .onAppear {
+            if animate { pulse = true }
+            if drift { driftX = true; driftY = true }
+        }
+    }
+
+    private var foreground: some View {
+        VStack(spacing: 22) {
+            ZStack {
+                Circle().fill(style.color.base.opacity(0.16))
+                    .frame(width: 128, height: 128)
+                    .scaleEffect(pulse ? 1.12 : 0.94)
+                Image(systemName: style.glyph)
+                    .font(.system(size: 54, weight: .semibold))
+                    .foregroundStyle(style.color.gradient)
+                    .modifier(GlyphEffect(kind: animate ? style.glyphAnimation : .none))
+            }
+            .animation(animate ? .easeInOut(duration: 1.8).repeatForever(autoreverses: true) : nil, value: pulse)
+
+            VStack(spacing: 8) {
+                Text(message)
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .multilineTextAlignment(.center)
+                Text("This Mac is being used remotely.")
+                    .font(.title3)
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            .frame(maxWidth: 640)
+
+            if showHint {
+                Label("Press ⌃⌥⌘U to unlock", systemImage: "lock.fill")
+                    .font(.callout)
+                    .foregroundStyle(.white.opacity(0.4))
+                    .padding(.top, 8)
+            }
+        }
+        .padding(40)
     }
 }
 
