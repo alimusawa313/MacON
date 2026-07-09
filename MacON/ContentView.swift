@@ -56,6 +56,7 @@ struct ContentView: View {
             SettingsView()
                 .environmentObject(pool).environmentObject(pipelines)
                 .environmentObject(companion).environmentObject(theme)
+                .environmentObject(PrivacyCurtain.shared)
         }
         .task { await pool.refreshReclaimable() }
     }

@@ -57,6 +57,10 @@ final class CompanionManager: ObservableObject {
         broadcaster.onNeedKeyframe = { [weak self] in
             Task { @MainActor in self?.streamer?.forceKeyframe() }
         }
+        // Keep the privacy curtain out of the stream: when it's raised/lowered,
+        // refresh which windows the capture excludes so the companion always
+        // sees the real screen, never the wall.
+        PrivacyCurtain.shared.onChange = { [weak self] in self?.applyCurtainExclusion() }
     }
 
     /// Should the server come up automatically at launch?
@@ -118,12 +122,18 @@ final class CompanionManager: ObservableObject {
             guard streamer == nil else { return }
             let s = ScreenStreamer(fps: streamFPS, maxWidth: streamMaxWidth,
                                    publish: { [broadcaster] packet in broadcaster.publish(packet) })
+            s.setExcludedWindows(PrivacyCurtain.shared.excludedWindowNumbers)
             s.start()
             streamer = s
         } else {
             streamer?.stop()
             streamer = nil
         }
+    }
+
+    /// Push the current curtain window set to the live streamer (if any).
+    func applyCurtainExclusion() {
+        streamer?.setExcludedWindows(PrivacyCurtain.shared.excludedWindowNumbers)
     }
 
     /// Requested stream frame rate (persists; applies live if capturing).

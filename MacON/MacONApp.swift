@@ -15,6 +15,7 @@ struct MacONApp: App {
     @StateObject private var pipelines = PipelinePool()
     @StateObject private var companion = CompanionManager()
     @StateObject private var theme = ThemeManager.shared
+    @StateObject private var curtain = PrivacyCurtain.shared
 
     var body: some Scene {
         WindowGroup {
@@ -23,6 +24,7 @@ struct MacONApp: App {
                 .environmentObject(pipelines)
                 .environmentObject(companion)
                 .environmentObject(theme)
+                .environmentObject(curtain)
                 .tint(Brand.blue)
                 .task {
                     // Bring the companion server back up if it was on last time.
@@ -50,6 +52,10 @@ struct MacONApp: App {
                 .disabled(!pool.anyActive)
             Button("Clean Caches") { pool.cleanCaches() }
                 .disabled(pool.anyActive || pool.isCleaningCaches)
+            Divider()
+            Button("Raise Privacy Screen") { curtain.raise() }
+                .disabled(curtain.isUp)
+                .help("Cover this Mac's screen. Companion keeps working. Unlock with ⌃⌥⌘U.")
             Divider()
             Button("Quit MacON") { NSApplication.shared.terminate(nil) }
         }
