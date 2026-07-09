@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements the signed macon-helper binary needs. The virtual-HID entitlement
+  must be requested/enabled for your Team ID in the Apple Developer portal.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Create a virtual HID keyboard (IOHIDUserDevice). Required to type at the
+         login window; needs Apple approval on your account. -->
+    <key>com.apple.developer.hid.virtual.device</key>
+    <true/>
+</dict>
+</plist>

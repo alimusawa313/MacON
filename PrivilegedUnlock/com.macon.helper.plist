@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchDaemon for macon-helper. Install at /Library/LaunchDaemons/ (root:wheel,
+  644). Runs as root at boot, before/at the login window. See SETUP.md.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.macon.helper</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Install the signed binary here (see SETUP.md). -->
+        <string>/usr/local/libexec/macon-helper</string>
+    </array>
+
+    <!-- Start at boot and keep it alive; it must be up at the login window. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/macon-helper.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/macon-helper.log</string>
+</dict>
+</plist>

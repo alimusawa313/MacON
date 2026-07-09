@@ -20,5 +20,15 @@ let package = Package(
             dependencies: ["MaconKit"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Privileged login-window unlock helper (scaffold — see PrivilegedUnlock/).
+        .target(
+            name: "CVirtualHID",
+            linkerSettings: [.linkedFramework("IOKit")]
+        ),
+        .executableTarget(
+            name: "macon-helper",
+            dependencies: ["MaconKit", "CVirtualHID"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )
