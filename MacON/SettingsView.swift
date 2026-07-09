@@ -21,6 +21,8 @@ struct SettingsView: View {
     @State private var showPairing = false
     @State private var newPasscode = ""
     @State private var selection: SettingsCategory = .appearance
+    /// Captured on open so Cancel can put the live-applied settings back.
+    @State private var snapshot: SettingsSnapshot?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,6 +53,7 @@ struct SettingsView: View {
             secretRows = pipelines.globalSecretKeys.map {
                 SecretRow(key: $0, value: Keychain.get(account: PipelinePool.globalSecretAccount($0)))
             }
+            if snapshot == nil { snapshot = captureSnapshot() }
         }
     }
 
@@ -76,8 +79,13 @@ struct SettingsView: View {
 
     private var footer: some View {
         HStack {
+            Button("Cancel") {
+                revert()
+                dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
             Spacer()
-            Button("Done") {
+            Button("Save") {
                 pipelines.setGlobalSecrets(secretRows.map { ($0.key, $0.value) })
                 dismiss()
             }
@@ -86,6 +94,37 @@ struct SettingsView: View {
         }
         .padding(16)
         .background(.bar)
+    }
+
+    // MARK: Snapshot / revert
+
+    private func captureSnapshot() -> SettingsSnapshot {
+        SettingsSnapshot(
+            themeStyle: theme.style, themeColor: theme.color,
+            email: pipelines.email, apiToken: pipelines.apiToken, githubToken: pipelines.githubToken,
+            port: companion.port, shareScreen: companion.shareScreen,
+            allowControl: companion.allowControl, remoteEnabled: companion.remoteEnabled,
+            cleanup: pool.cleanupSettings,
+            curtainStyle: curtain.style, curtainMessage: curtain.message)
+    }
+
+    /// Put back every live-applied value we changed. Explicit actions (starting
+    /// the server, raising the curtain, saving a passcode, picking an image,
+    /// cleaning caches) are one-shot and intentionally not undone here.
+    private func revert() {
+        guard let s = snapshot else { return }
+        if theme.style != s.themeStyle { theme.style = s.themeStyle }
+        if theme.color != s.themeColor { theme.color = s.themeColor }
+        if pipelines.email != s.email { pipelines.email = s.email }
+        if pipelines.apiToken != s.apiToken { pipelines.apiToken = s.apiToken }
+        if pipelines.githubToken != s.githubToken { pipelines.githubToken = s.githubToken }
+        if companion.port != s.port { companion.port = s.port }
+        if companion.shareScreen != s.shareScreen { companion.shareScreen = s.shareScreen }
+        if companion.allowControl != s.allowControl { companion.allowControl = s.allowControl }
+        if companion.remoteEnabled != s.remoteEnabled { companion.remoteEnabled = s.remoteEnabled }
+        if pool.cleanupSettings != s.cleanup { pool.cleanupSettings = s.cleanup }
+        if curtain.style != s.curtainStyle { curtain.style = s.curtainStyle }
+        if curtain.message != s.curtainMessage { curtain.message = s.curtainMessage }
     }
 
     // MARK: Sections
@@ -464,6 +503,25 @@ struct SettingsView: View {
               let bundle = try? MaconExport.decoded(from: data) else { return }
         pipelines.importBundle(bundle, replaceExisting: false)
     }
+}
+
+// MARK: - Snapshot
+
+/// The live-applied settings captured when the sheet opens, so Cancel can
+/// restore them exactly.
+struct SettingsSnapshot {
+    var themeStyle: ThemeStyle
+    var themeColor: ThemeColor
+    var email: String
+    var apiToken: String
+    var githubToken: String
+    var port: Int
+    var shareScreen: Bool
+    var allowControl: Bool
+    var remoteEnabled: Bool
+    var cleanup: CleanupSettings
+    var curtainStyle: CurtainStyle
+    var curtainMessage: String
 }
 
 // MARK: - Categories
