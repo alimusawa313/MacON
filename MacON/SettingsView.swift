@@ -218,7 +218,8 @@ struct SettingsView: View {
                 set: { on in
                     if on {
                         companion.start(runnerName: ProcessInfo.processInfo.hostName,
-                                        runners: { pipelines.pipelines })
+                                        runners: { pipelines.pipelines },
+                                        pool: pipelines)
                     } else { companion.stop() }
                 }))
             HStack {

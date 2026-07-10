@@ -30,7 +30,8 @@ struct MacONApp: App {
                     // Bring the companion server back up if it was on last time.
                     if companion.startsAtLaunch && !companion.isRunning {
                         companion.start(runnerName: ProcessInfo.processInfo.hostName,
-                                        runners: { pipelines.pipelines })
+                                        runners: { pipelines.pipelines },
+                                        pool: pipelines)
                     }
                 }
         }
