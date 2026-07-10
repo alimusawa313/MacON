@@ -112,15 +112,6 @@ final class CompanionManager: ObservableObject {
                         if let w = event.code { self.setStreamMaxWidth(w) }
                         return
                     }
-                    if event.t == "curtain" {           // privacy screen — the user's own device
-                        let c = PrivacyCurtain.shared
-                        switch event.s {
-                        case "raise": c.raise()
-                        case "lower": c.lower()
-                        default:      c.isUp ? c.lower() : c.raise()
-                        }
-                        return
-                    }
                     guard self.allowControl else { return }
                     self.remote.handle(event)
                 }
