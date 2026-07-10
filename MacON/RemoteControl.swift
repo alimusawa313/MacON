@@ -148,7 +148,12 @@ final class RemoteControl {
                 utf16.withUnsafeBufferPointer {
                     ev.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: $0.baseAddress)
                 }
-                if mapped?.shift == true { ev.flags = .maskShift }
+                // Set flags explicitly on every keystroke. Otherwise the event
+                // inherits the current HID modifier state, and a stale ⌃ (e.g.
+                // left over from a chord) turns "e"→⌃E and "d"→⌃D — emacs bindings
+                // that type nothing. A physical keypress clears that state, which
+                // is why it "worked after pressing the Mac keyboard first".
+                ev.flags = (mapped?.shift == true) ? .maskShift : []
                 ev.post(tap: .cghidEventTap)
             }
         }
@@ -228,8 +233,21 @@ final class RemoteControl {
             ev?.post(tap: .cghidEventTap)
         }
         usleep(25_000)                                  // key registers before release
+        // Release modifiers, each event carrying the correct diminishing flag
+        // state so nothing is left "held" in the HID session (which would then
+        // poison the next plain keystroke).
+        var remaining = flags
+        remaining.remove(.maskSecondaryFn); remaining.remove(.maskNumericPad)
         for m in modKeys.reversed() {
+            switch m {
+            case 55: remaining.remove(.maskCommand)
+            case 59: remaining.remove(.maskControl)
+            case 58: remaining.remove(.maskAlternate)
+            case 56: remaining.remove(.maskShift)
+            default: break
+            }
             let ev = CGEvent(keyboardEventSource: src, virtualKey: m, keyDown: false)
+            ev?.flags = remaining
             ev?.post(tap: .cghidEventTap)
         }
     }
