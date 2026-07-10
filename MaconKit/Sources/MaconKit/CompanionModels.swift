@@ -40,6 +40,56 @@ public struct CompanionLogDTO: Codable, Sendable {
     public var seq: Int
     public var text: String
     public var level: String?            // "info" | "error"
+    public var date: Date?               // for per-step durations in the app
+}
+
+/// `GET /pipelines` response — the runner's configured pipelines, so a paired
+/// device can manage them like the Mac app does.
+public struct CompanionPipelinesDTO: Codable, Sendable {
+    public var pipelines: [CompanionPipelineDTO]
+    public init(pipelines: [CompanionPipelineDTO]) { self.pipelines = pipelines }
+}
+
+/// One pipeline: its editable config plus (server → app) runtime state.
+/// The same shape is accepted back on POST /pipelines and PUT /pipelines/{id};
+/// runtime fields are ignored there.
+public struct CompanionPipelineDTO: Codable, Sendable {
+    public var id: String
+    public var name: String
+    public var provider: String          // bitbucket | github
+    public var workspace: String
+    public var repoSlug: String
+    public var branch: String
+    public var watchMode: String         // branch | pullRequests
+    public var prTargetBranch: String
+    public var pipelineFile: String
+    public var workflow: String
+    public var buildCommand: String
+    public var triggerMode: String       // polling | webhook
+    public var pollSeconds: Int
+    public var webhookPort: Int
+    public var buildTimeoutSeconds: Int
+    public var postStatus: Bool
+    // Runtime state — populated by the server, ignored on create/update.
+    public var isWatching: Bool?
+    public var isBuilding: Bool?
+    public var state: String?            // idle | running | passed | failed
+
+    public init(id: String, name: String, provider: String, workspace: String,
+                repoSlug: String, branch: String, watchMode: String, prTargetBranch: String,
+                pipelineFile: String, workflow: String, buildCommand: String,
+                triggerMode: String, pollSeconds: Int, webhookPort: Int,
+                buildTimeoutSeconds: Int, postStatus: Bool,
+                isWatching: Bool? = nil, isBuilding: Bool? = nil, state: String? = nil) {
+        self.id = id; self.name = name; self.provider = provider; self.workspace = workspace
+        self.repoSlug = repoSlug; self.branch = branch; self.watchMode = watchMode
+        self.prTargetBranch = prTargetBranch; self.pipelineFile = pipelineFile
+        self.workflow = workflow; self.buildCommand = buildCommand
+        self.triggerMode = triggerMode; self.pollSeconds = pollSeconds
+        self.webhookPort = webhookPort; self.buildTimeoutSeconds = buildTimeoutSeconds
+        self.postStatus = postStatus
+        self.isWatching = isWatching; self.isBuilding = isBuilding; self.state = state
+    }
 }
 
 /// `GET /apps` response — installed Mac apps, for the companion's shortcut deck.
@@ -77,6 +127,12 @@ public enum InstalledApps {
         }
         return apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
+}
+
+/// A plain list of names (repos, branches) for the app's pickers.
+public struct CompanionListDTO: Codable, Sendable {
+    public var values: [String]
+    public init(values: [String]) { self.values = values }
 }
 
 /// `POST /pair` request / response.

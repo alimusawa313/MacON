@@ -93,13 +93,15 @@ final class CompanionManager: ObservableObject {
 
     // MARK: Lifecycle
 
-    func start(runnerName: String, runners: @escaping () -> [PipelineRunner]) {
+    func start(runnerName: String, runners: @escaping () -> [PipelineRunner],
+               pool: PipelinePool? = nil) {
         guard service == nil else { return }
         defaults.set(port, forKey: portKey)
         defaults.set(true, forKey: enabledKey)
         let svc = CompanionService(
             runners: runners, runnerName: runnerName,
             port: UInt16(clamping: port), store: store,
+            pool: pool,
             screen: broadcaster,
             control: { [weak self] event in
                 Task { @MainActor in
