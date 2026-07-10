@@ -133,12 +133,26 @@ final class RemoteControl {
             .post(tap: .cghidEventTap)
     }
 
+    /// A persistent HID source for synthetic typing. A real source (not nil),
+    /// reused across keystrokes, keeps the window server from coalescing rapid
+    /// key events — which is what made frequent letters (e, d, …) vanish
+    /// mid-sentence when typing fast from the companion.
+    private let typeSource = CGEventSource(stateID: .hidSystemState)
+
+    /// Type text one character at a time. Each character is its own key
+    /// down+up carrying the Unicode string, with a short settle so back-to-back
+    /// keystrokes aren't collapsed into a repeat and silently dropped.
     private func type(_ s: String) {
-        let chars = Array(s.utf16)
-        for down in [true, false] {
-            let ev = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)
-            chars.withUnsafeBufferPointer { ev?.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: $0.baseAddress) }
-            ev?.post(tap: .cghidEventTap)
+        for ch in s {
+            let units = Array(String(ch).utf16)
+            for down in [true, false] {
+                guard let ev = CGEvent(keyboardEventSource: typeSource, virtualKey: 0, keyDown: down) else { continue }
+                units.withUnsafeBufferPointer {
+                    ev.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress)
+                }
+                ev.post(tap: .cghidEventTap)
+            }
+            usleep(1200)   // ~1.2ms gap so fast typing isn't dropped
         }
     }
 
