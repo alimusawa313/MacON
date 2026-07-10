@@ -133,28 +133,51 @@ final class RemoteControl {
             .post(tap: .cghidEventTap)
     }
 
-    /// A persistent HID source for synthetic typing. A real source (not nil),
-    /// reused across keystrokes, keeps the window server from coalescing rapid
-    /// key events — which is what made frequent letters (e, d, …) vanish
-    /// mid-sentence when typing fast from the companion.
-    private let typeSource = CGEventSource(stateID: .hidSystemState)
-
-    /// Type text one character at a time. Each character is its own key
-    /// down+up carrying the Unicode string, with a short settle so back-to-back
-    /// keystrokes aren't collapsed into a repeat and silently dropped.
+    /// Type a string as real keystrokes. Each character gets its *own* virtual
+    /// keycode (not a shared 0) so macOS doesn't mistake consecutive keys for
+    /// auto-repeat and swallow them; the Unicode string is still set so the exact
+    /// character (case, symbols, emoji) is what lands.
     private func type(_ s: String) {
+        let src = CGEventSource(stateID: .hidSystemState)
         for ch in s {
-            let units = Array(String(ch).utf16)
+            let utf16 = Array(String(ch).utf16)
+            let mapped = Self.keyCode(for: ch)
             for down in [true, false] {
-                guard let ev = CGEvent(keyboardEventSource: typeSource, virtualKey: 0, keyDown: down) else { continue }
-                units.withUnsafeBufferPointer {
-                    ev.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress)
+                guard let ev = CGEvent(keyboardEventSource: src,
+                                       virtualKey: mapped?.code ?? 0, keyDown: down) else { continue }
+                utf16.withUnsafeBufferPointer {
+                    ev.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: $0.baseAddress)
                 }
+                if mapped?.shift == true { ev.flags = .maskShift }
                 ev.post(tap: .cghidEventTap)
             }
-            usleep(1200)   // ~1.2ms gap so fast typing isn't dropped
         }
     }
+
+    /// US-QWERTY virtual keycode (and whether Shift is needed) for a character.
+    /// Nil for characters we can't map — those fall back to a Unicode-only event.
+    private static func keyCode(for ch: Character) -> (code: CGKeyCode, shift: Bool)? {
+        if let c = baseKey[ch] { return (c, false) }
+        if ch.isUppercase, let first = ch.lowercased().first, let c = baseKey[first] { return (c, true) }
+        if let base = shiftedSymbols[ch], let c = baseKey[base] { return (c, true) }
+        return nil
+    }
+
+    private static let baseKey: [Character: CGKeyCode] = [
+        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
+        "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32,
+        "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
+        "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25, "0": 29,
+        "-": 27, "=": 24, "[": 33, "]": 30, "\\": 42, ";": 41, "'": 39,
+        ",": 43, ".": 47, "/": 44, "`": 50, " ": 49,
+    ]
+
+    /// Shifted punctuation → the unshifted key it lives on.
+    private static let shiftedSymbols: [Character: Character] = [
+        "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8",
+        "(": "9", ")": "0", "_": "-", "+": "=", "{": "[", "}": "]", "|": "\\",
+        ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`",
+    ]
 
     private func key(_ code: CGKeyCode, down: Bool) {
         CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.post(tap: .cghidEventTap)
