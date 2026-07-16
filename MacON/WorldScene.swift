@@ -102,6 +102,102 @@ struct WorldStage: NSViewRepresentable {
     }
 }
 
+// MARK: - Fleet stage (fleet teaser)
+
+/// The Fleet teaser's 3D stage: the "Fleet" title over a rack of Macs, fully
+/// interactive — a drag anywhere spins the rack, a drag in the title zone
+/// spins the title. Same clay world as the welcome stage.
+struct FleetStage: NSViewRepresentable {
+    let dark: Bool
+    let theme: WorldTheme
+
+    private var cacheKey: String { "\(dark)|\(theme.rawValue)" }
+
+    final class Coordinator: NSObject, NSGestureRecognizerDelegate {
+        weak var view: SCNView?
+        private var baseYaw: CGFloat = 0
+        private var basePitch: CGFloat = 0
+        private weak var target: SCNNode?     // what this drag is spinning
+        private weak var pitchNode: SCNNode?  // where the tilt lives
+        private var restYaw: CGFloat = 0
+        private var restPitch: CGFloat = 0
+
+        private func node(_ name: String) -> SCNNode? {
+            view?.scene?.rootNode.childNode(withName: name, recursively: true)
+        }
+
+        @objc func pan(_ gesture: NSPanGestureRecognizer) {
+            guard let view else { return }
+            switch gesture.state {
+            case .began:
+                // AppKit's origin is bottom-left; the title sits at the top.
+                let inTitle = gesture.location(in: view).y > view.bounds.height * 0.68
+                if inTitle, let title = node("title") {
+                    target = title; pitchNode = node("titleTilt")
+                    restYaw = -0.14; restPitch = 0.03
+                } else if let hero = node("hero") {
+                    target = hero; pitchNode = hero
+                    restYaw = 0; restPitch = 0
+                } else {
+                    target = nil; return
+                }
+                // Cancel only a previous fling — never the idle float/sway.
+                target?.removeAction(forKey: "userSpin")
+                baseYaw = target?.eulerAngles.y ?? 0
+                basePitch = pitchNode?.eulerAngles.x ?? 0
+            case .changed:
+                guard let target else { return }
+                let t = gesture.translation(in: view)
+                target.eulerAngles.y = baseYaw + t.x * 0.02
+                // AppKit's y grows upward — invert so dragging down tips it back.
+                pitchNode?.eulerAngles.x = max(-0.6, min(0.6, basePitch - t.y * 0.008))
+            case .ended, .cancelled:
+                guard let target else { return }
+                let velocity = gesture.velocity(in: view)
+                let spin = SCNAction.rotateBy(x: 0, y: velocity.x * 0.0035, z: 0, duration: 1.4)
+                spin.timingMode = .easeOut
+                let home = SCNAction.rotateTo(x: 0, y: restYaw, z: 0,
+                                              duration: 0.7, usesShortestUnitArc: true)
+                home.timingMode = .easeInEaseOut
+                target.runAction(.sequence([spin, home]), forKey: "userSpin")
+                SCNTransaction.begin()
+                SCNTransaction.animationDuration = 0.5
+                pitchNode?.eulerAngles.x = restPitch
+                SCNTransaction.commit()
+                self.target = nil
+            default:
+                break
+            }
+        }
+
+        // The whole stage is grabbable.
+        func gestureRecognizerShouldBegin(_ gesture: NSGestureRecognizer) -> Bool { true }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> SCNView {
+        let view = SCNView()
+        view.backgroundColor = .clear
+        view.antialiasingMode = .multisampling4X
+        view.scene = WorldScene.buildFleet(dark: dark, theme: theme)
+        context.coordinator.view = view
+
+        let pan = NSPanGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.pan(_:)))
+        pan.delegate = context.coordinator
+        view.addGestureRecognizer(pan)
+        return view
+    }
+
+    func updateNSView(_ view: SCNView, context: Context) {
+        let key = cacheKey
+        guard view.accessibilityLabel() != key else { return }
+        view.setAccessibilityLabel(key)
+        view.scene = WorldScene.buildFleet(dark: dark, theme: theme)
+    }
+}
+
 // MARK: - Sprite (privacy curtain)
 
 /// One floating clay piece — the world's signature model (gear, blob, brick
@@ -316,6 +412,175 @@ enum WorldScene {
         ]).eased()))
 
         return scene
+    }
+
+    /// The Fleet teaser scene: the "Fleet" title over a little rack of clay
+    /// Macs, wrapped in a "hero" pivot so an interactive drag spins the rack
+    /// in place. Same camera, lights and dressing as the welcome stage.
+    static func buildFleet(dark: Bool, theme: WorldTheme) -> SCNScene {
+        let box = theme.palette
+        let skin = theme.skin
+        let scene = SCNScene()
+        scene.background.contents = NSColor.clear
+
+        let camera = SCNCamera()
+        camera.projectionDirection = .horizontal
+        camera.fieldOfView = 34
+        let camNode = SCNNode()
+        camNode.name = "camera"
+        camNode.camera = camera
+        camNode.position = SCNVector3(0, 0.3, 17)
+        scene.rootNode.addChildNode(camNode)
+
+        let key = SCNNode()
+        key.light = SCNLight(); key.light!.type = .directional; key.light!.intensity = 450
+        key.eulerAngles = SCNVector3(-0.6, -0.45, 0)
+        scene.rootNode.addChildNode(key)
+        let rim = SCNNode()
+        rim.light = SCNLight(); rim.light!.type = .directional; rim.light!.intensity = 140
+        rim.eulerAngles = SCNVector3(0.5, 2.4, 0)
+        scene.rootNode.addChildNode(rim)
+        let ambient = SCNNode()
+        ambient.light = SCNLight(); ambient.light!.type = .ambient
+        ambient.light!.intensity = dark ? 560 : 680
+        scene.rootNode.addChildNode(ambient)
+
+        let titleNode = styledTextNode("Fleet", fontSize: 2.6, extrusion: 0.9,
+                                       face: box.titleFace(dark: dark),
+                                       side: box.titleSide(dark: dark),
+                                       box: box, skin: skin)
+        fit(titleNode, maxWidth: 8.4)
+        titleNode.name = "title"
+        titleNode.eulerAngles = SCNVector3(0, -0.14, 0)
+        let tiltNode = SCNNode()
+        tiltNode.name = "titleTilt"
+        tiltNode.position = SCNVector3(0, 7.4, 0)
+        tiltNode.eulerAngles = SCNVector3(0.03, 0, 0)
+        tiltNode.addChildNode(titleNode)
+        scene.rootNode.addChildNode(tiltNode)
+
+        let heroBody = fleetRackNode(box: box, skin: skin)
+        let heroPivot = SCNNode()
+        heroPivot.name = "hero"
+        heroPivot.position = SCNVector3(0, -1.6, 0)
+        heroPivot.addChildNode(heroBody)
+        scene.rootNode.addChildNode(heroPivot)
+
+        switch skin {
+        case .cosmos: scene.rootNode.addChildNode(starField(box: box))
+        case .googly: scene.rootNode.addChildNode(eyeField(box: box))
+        case .holo:   scene.rootNode.addChildNode(chromeDrift())
+        case .puffy:  scene.rootNode.addChildNode(cloudDrift(box: box))
+        default: break
+        }
+
+        let shadow = SCNPlane(width: 10, height: 3.4)
+        shadow.firstMaterial?.diffuse.contents = softShadowImage
+        shadow.firstMaterial?.lightingModel = .constant
+        shadow.firstMaterial?.isDoubleSided = true
+        shadow.firstMaterial?.blendMode = .alpha
+        shadow.firstMaterial?.writesToDepthBuffer = false
+        let shadowNode = SCNNode(geometry: shadow)
+        shadowNode.eulerAngles = SCNVector3(-CGFloat.pi / 2, 0, 0)
+        shadowNode.position = SCNVector3(0, -6.6, 0)
+        shadowNode.opacity = dark ? 0.5 : 0.3
+        scene.rootNode.addChildNode(shadowNode)
+
+        heroPivot.runAction(.repeatForever(.sequence([
+            .moveBy(x: 0, y: 0.28, z: 0, duration: 2.6),
+            .moveBy(x: 0, y: -0.28, z: 0, duration: 2.6),
+        ]).eased()))
+
+        return scene
+    }
+
+    /// A little rack of Macs — a primary up front, two set back to the sides —
+    /// each a compact clay screen bobbing on its own beat, with a per-world
+    /// signature accent hovering above.
+    private static func fleetRackNode(box: WorldPalette, skin: WorldSkin) -> SCNNode {
+        let parent = SCNNode()
+        let specs: [(pos: SCNVector3, scale: CGFloat, yaw: CGFloat, lamp: NSColor)] = [
+            (SCNVector3(0, -0.4, 1.8), 1.0, 0, box.good),
+            (SCNVector3(-3.4, 1.2, -1.6), 0.7, 0.34, box.warm),
+            (SCNVector3(3.4, 1.1, -1.8), 0.7, -0.34, box.good),
+        ]
+        for (i, spec) in specs.enumerated() {
+            let mac = miniMacNode(box: box, lamp: spec.lamp)
+            mac.position = spec.pos
+            mac.scale = SCNVector3(spec.scale, spec.scale, spec.scale)
+            mac.eulerAngles = SCNVector3(0, spec.yaw, 0)
+            let beat = 2.2 + Double(i) * 0.6                 // each floats out of sync
+            mac.runAction(.repeatForever(.sequence([
+                .moveBy(x: 0, y: 0.22, z: 0, duration: beat),
+                .moveBy(x: 0, y: -0.22, z: 0, duration: beat),
+            ]).eased()))
+            parent.addChildNode(mac)
+        }
+        if let accent = accentNode(skin: skin, box: box) {
+            accent.position = SCNVector3(0, 4.6, -2.4)
+            accent.scale = SCNVector3(0.5, 0.5, 0.5)
+            parent.addChildNode(accent)
+        }
+        sway(parent, angle: 0.12, duration: 5)
+        return parent
+    }
+
+    /// A compact clay Mac: rounded body, a lit face with traffic dots and a
+    /// content bar, a breathing status lamp, and a little stand.
+    private static func miniMacNode(box: WorldPalette, lamp: NSColor) -> SCNNode {
+        let node = SCNNode()
+
+        let body = SCNBox(width: 3.4, height: 2.3, length: 0.5, chamferRadius: 0.3)
+        body.materials = [clay(box.soft)]
+        node.addChildNode(SCNNode(geometry: body))
+
+        let face = SCNBox(width: 2.9, height: 1.8, length: 0.12, chamferRadius: 0.16)
+        let lit = SCNMaterial()
+        lit.lightingModel = .constant
+        lit.diffuse.contents = box.cloud
+        face.materials = [lit]
+        let faceNode = SCNNode(geometry: face)
+        faceNode.position = SCNVector3(0, 0, 0.28)
+        node.addChildNode(faceNode)
+
+        for (i, color) in [box.bad, box.warm, box.good].enumerated() {
+            let dot = SCNSphere(radius: 0.09)
+            dot.materials = [clay(color)]
+            let d = SCNNode(geometry: dot)
+            d.position = SCNVector3(-1.1 + CGFloat(i) * 0.28, 0.6, 0.36)
+            node.addChildNode(d)
+        }
+
+        let bar = SCNBox(width: 1.7, height: 0.28, length: 0.16, chamferRadius: 0.08)
+        bar.materials = [clay(box.primary)]
+        let barNode = SCNNode(geometry: bar)
+        barNode.position = SCNVector3(-0.2, -0.15, 0.36)
+        node.addChildNode(barNode)
+
+        // Status lamp on the bezel, breathing.
+        let lampGeom = SCNSphere(radius: 0.13)
+        lampGeom.materials = [clay(lamp)]
+        let lampNode = SCNNode(geometry: lampGeom)
+        lampNode.position = SCNVector3(1.15, 0.6, 0.36)
+        lampNode.runAction(.repeatForever(.sequence([
+            .scale(to: 1.4, duration: 0.9),
+            .scale(to: 1.0, duration: 0.9),
+        ]).eased()))
+        node.addChildNode(lampNode)
+
+        let neck = SCNBox(width: 0.5, height: 0.6, length: 0.3, chamferRadius: 0.12)
+        neck.materials = [clay(box.primary)]
+        let neckNode = SCNNode(geometry: neck)
+        neckNode.position = SCNVector3(0, -1.5, -0.05)
+        node.addChildNode(neckNode)
+
+        let base = SCNBox(width: 1.5, height: 0.22, length: 0.9, chamferRadius: 0.12)
+        base.materials = [clay(box.primary)]
+        let baseNode = SCNNode(geometry: base)
+        baseNode.position = SCNVector3(0, -1.85, -0.05)
+        node.addChildNode(baseNode)
+
+        return node
     }
 
     /// The running count front and center, the CI gear turning behind its
