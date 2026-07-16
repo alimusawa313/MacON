@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import AppKit
 
 struct OllamaService {
     var base = URL(string: "http://127.0.0.1:11434")!
@@ -28,8 +29,10 @@ struct OllamaService {
     // MARK: Models
 
     /// Encoded `AIModelsDTO` of installed models (each with a resolved vision
-    /// flag), or nil when Ollama isn't reachable.
+    /// flag), or nil when Ollama isn't reachable. Starts Ollama first if it
+    /// isn't already running — so opening the Assistant on the phone wakes it.
     func modelsData() async -> Data? {
+        guard await ensureRunning() else { return nil }
         guard let tags = try? await tags() else { return nil }
         var out: [AIModelDTO] = []
         await withTaskGroup(of: AIModelDTO?.self) { group in
@@ -47,9 +50,49 @@ struct OllamaService {
     }
 
     /// Number of installed models, or nil if Ollama isn't reachable — for the
-    /// settings status line.
+    /// settings status line. Starts Ollama if it isn't running.
     func probe() async -> Int? {
-        (try? await tags())?.count
+        guard await ensureRunning() else { return nil }
+        return (try? await tags())?.count
+    }
+
+    /// Ensure the local Ollama server is up: if a quick ping fails, launch it
+    /// (the menu-bar app, or the `ollama serve` CLI) and poll until it answers
+    /// or we give up.
+    func ensureRunning() async -> Bool {
+        if await ping() { return true }
+        launch()
+        for _ in 0..<16 {                         // ~8s: a cold server start
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if await ping() { return true }
+        }
+        return false
+    }
+
+    /// A fast "is it there?" — the tags endpoint with a short timeout.
+    private func ping() async -> Bool {
+        var req = URLRequest(url: base.appendingPathComponent("api/tags"))
+        req.timeoutInterval = 1.5
+        guard let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }
+        return (resp as? HTTPURLResponse).map { (200..<500).contains($0.statusCode) } ?? false
+    }
+
+    /// Best-effort start: open the Ollama menu-bar app (its background server
+    /// binds :11434), and also try the CLI `ollama serve` for Homebrew-only
+    /// installs. No-ops harmlessly when neither is present.
+    private func launch() {
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-ga", "Ollama"]        // -g: don't steal focus
+        try? open.run()
+
+        let candidates = ["/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"]
+        guard let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        else { return }
+        let serve = Process()
+        serve.executableURL = URL(fileURLWithPath: path)
+        serve.arguments = ["serve"]
+        try? serve.run()
     }
 
     // MARK: Chat (streaming)
@@ -60,6 +103,11 @@ struct OllamaService {
     func chat(body: Data, emit: @escaping @Sendable (Data) -> Void) async {
         guard let req = try? JSONDecoder().decode(AIChatRequestDTO.self, from: body) else {
             emit(Self.errorLine("Malformed chat request.")); return
+        }
+        guard await ensureRunning() else {
+            emit(Self.errorLine("Couldn't reach Ollama on this Mac — is it running? "
+                                + "Install it from ollama.com and run `ollama serve`."))
+            return
         }
         var urlReq = URLRequest(url: base.appendingPathComponent("api/chat"))
         urlReq.httpMethod = "POST"
