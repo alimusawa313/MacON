@@ -14,6 +14,7 @@ import MaconKit
 enum SidebarSelection: Hashable {
     case runner(UUID)
     case pipeline(UUID)
+    case fleet
 }
 
 struct ContentView: View {
@@ -47,6 +48,19 @@ struct ContentView: View {
                         let a = pool.addRunner(); selection = .runner(a.id)
                     }
                 } header: { sectionHeader("Bitbucket Runners", "server.rack", world.warm) }
+
+                Section {
+                    HStack(spacing: 11) {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .foregroundStyle(world.primary)
+                            .frame(width: 15)
+                        Text("Fleet").font(.body.weight(.medium))
+                        Spacer()
+                        Pill(text: "Soon", systemImage: "sparkles", tint: world.primary)
+                    }
+                    .padding(.vertical, 3)
+                    .tag(SidebarSelection.fleet)
+                } header: { sectionHeader("Cluster", "cpu.fill", world.good) }
             }
             .navigationSplitViewColumnWidth(min: 250, ideal: 280)
             .safeAreaInset(edge: .bottom) { poolBar }
@@ -118,6 +132,8 @@ struct ContentView: View {
             if let a = pool.agents.first(where: { $0.id == id }) {
                 RunnerDetailView(agent: a).id(a.id)
             } else { welcome }
+        case .fleet:
+            FleetView(world: world)
         case nil:
             welcome
         }
