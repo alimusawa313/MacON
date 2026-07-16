@@ -2,8 +2,9 @@
 //  ContentView.swift
 //  MacON
 //
-//  Sidebar (Local Pipelines + Bitbucket Runners) and a detail pane, dressed up
-//  with the app's visual language.
+//  Sidebar (Local Pipelines + Bitbucket Runners) and a detail pane, dressed
+//  in the clay world shared with the companion app — the welcome pane is a
+//  real 3D station: a spinnable puffy title over a state-reactive machine.
 //
 
 import SwiftUI
@@ -19,43 +20,43 @@ struct ContentView: View {
     @EnvironmentObject private var pool: RunnerPool
     @EnvironmentObject private var pipelines: PipelinePool
     @EnvironmentObject private var companion: CompanionManager
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
     @State private var selection: SidebarSelection?
     @State private var showSettings = false
+
+    private var world: WorldStyle { WorldStyle(raw: worldRaw, dark: scheme == .dark) }
 
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section {
                     ForEach(pipelines.pipelines) { p in
-                        PipelineRow(pipeline: p).tag(SidebarSelection.pipeline(p.id))
+                        PipelineRow(pipeline: p, world: world).tag(SidebarSelection.pipeline(p.id))
                     }
                     addButton("New pipeline") {
                         let p = pipelines.addPipeline(); selection = .pipeline(p.id)
                     }
-                } header: { sectionHeader("Local Pipelines", "bolt.horizontal.fill", Brand.blue) }
+                } header: { sectionHeader("Local Pipelines", "bolt.horizontal.fill", world.primary) }
 
                 Section {
                     ForEach(pool.agents) { agent in
-                        RunnerRow(agent: agent).tag(SidebarSelection.runner(agent.id))
+                        RunnerRow(agent: agent, world: world).tag(SidebarSelection.runner(agent.id))
                     }
                     addButton("Add runner") {
                         let a = pool.addRunner(); selection = .runner(a.id)
                     }
-                } header: { sectionHeader("Bitbucket Runners", "server.rack", Brand.indigo) }
+                } header: { sectionHeader("Bitbucket Runners", "server.rack", world.warm) }
             }
             .navigationSplitViewColumnWidth(min: 250, ideal: 280)
             .safeAreaInset(edge: .bottom) { poolBar }
         } detail: {
             detail
         }
-        // Re-skin the whole nav tree when the theme changes, without disturbing
-        // ContentView's own state (so an open Settings sheet stays put).
-        .id(theme.token)
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(pool).environmentObject(pipelines)
-                .environmentObject(companion).environmentObject(theme)
+                .environmentObject(companion)
                 .environmentObject(PrivacyCurtain.shared)
         }
         .task { await pool.refreshReclaimable() }
@@ -84,10 +85,10 @@ struct ContentView: View {
     private var poolBar: some View {
         VStack(spacing: 0) {
             Rectangle()
-                .fill(activeAny ? Brand.gradient : LinearGradient(colors: [.gray.opacity(0.2)], startPoint: .leading, endPoint: .trailing))
+                .fill(activeAny ? AnyShapeStyle(world.primary.gradient) : AnyShapeStyle(Color.gray.opacity(0.2)))
                 .frame(height: 2)
             HStack(spacing: 8) {
-                PulseDot(color: activeAny ? Brand.blue : .gray, active: activeAny, size: 9)
+                PulseDot(color: activeAny ? world.primary : .gray, active: activeAny, size: 9)
                 Text("\(pipelines.watchingCount) watching · \(pool.activeCount) live")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -125,76 +126,88 @@ struct ContentView: View {
     private var welcome: some View {
         WelcomeView(
             watching: pipelines.watchingCount,
+            mood: welcomeMood,
             runners: pool.activeCount,
             reclaimable: pool.reclaimableBytes,
+            world: world,
             newPipeline: { let p = pipelines.addPipeline(); selection = .pipeline(p.id) },
             addRunner: { let a = pool.addRunner(); selection = .runner(a.id) })
+    }
+
+    /// The machine's mood mirrors the fleet: building → busy, any failure →
+    /// alert, otherwise calm.
+    private var welcomeMood: WorldStage.Mood {
+        if pipelines.pipelines.contains(where: { $0.isBuilding }) { return .busy }
+        let anyFailed = pipelines.pipelines.contains {
+            if case .failed = $0.buildState { return true } else { return false }
+        }
+        return anyFailed ? .alert : .calm
     }
 }
 
 // MARK: - Welcome / empty state
 
+/// The clay station: "MacOn" as a spinnable 3D title, the watched-pipeline
+/// count as the state-reactive machine beneath it, stat chips and the two
+/// first actions below.
 private struct WelcomeView: View {
     var watching: Int
+    var mood: WorldStage.Mood
     var runners: Int
     var reclaimable: Int64
+    var world: WorldStyle
     var newPipeline: () -> Void
     var addRunner: () -> Void
 
-    @State private var float = false
     @State private var appear = false
 
     var body: some View {
         ZStack {
-            AuroraBackground(intensity: 0.33)
+            WorldBackdrop(world: world)
 
-            VStack(spacing: 24) {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 128, height: 128)
-                    .shadow(color: Brand.blue.opacity(0.35), radius: 24, y: 12)
-                    .offset(y: float ? -8 : 8)
-                    .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: float)
+            VStack(spacing: 14) {
+                WorldStage(title: "MacOn", figure: "\(watching)", mood: mood,
+                           dark: world.dark, theme: world.theme)
+                    .aspectRatio(0.62, contentMode: .fit)
+                    .frame(maxHeight: 460)
 
-                VStack(spacing: 7) {
-                    Text("MacOn").font(.system(size: 40, weight: .bold, design: .rounded))
-                    Text("Your Mac is the CI runner.")
-                        .font(.title3).foregroundStyle(.secondary)
-                }
+                Text("Your Mac is the CI runner.")
+                    .font(.system(.title3, design: .rounded).weight(.medium))
+                    .foregroundStyle(world.ink.opacity(0.65))
 
                 HStack(spacing: 12) {
-                    StatChip(icon: "eye.fill", value: "\(watching)", label: "watching", tint: Brand.blue)
-                    StatChip(icon: "bolt.fill", value: "\(runners)", label: "runners live", tint: Brand.emerald)
+                    StatChip(icon: "eye.fill", value: "\(watching)", label: "watching",
+                             tint: world.primary, world: world)
+                    StatChip(icon: "bolt.fill", value: "\(runners)", label: "runners live",
+                             tint: world.good, world: world)
                     StatChip(icon: "internaldrive.fill",
                              value: reclaimable > 0 ? ByteCountFormatter.string(fromByteCount: reclaimable, countStyle: .file) : "—",
-                             label: "reclaimable", tint: Brand.amber)
+                             label: "reclaimable", tint: world.warm, world: world)
                 }
 
                 HStack(spacing: 12) {
                     Button(action: newPipeline) {
                         Label("New Pipeline", systemImage: "plus")
                     }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(ClayButtonStyle(world: world))
                     Button(action: addRunner) {
                         Label("Add Runner", systemImage: "server.rack")
                     }
-                    .buttonStyle(SoftButtonStyle())
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
                 }
                 .padding(.top, 2)
 
                 Text("Local Pipelines build commits right here. Bitbucket Runners execute Pipelines jobs on this Mac.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.system(.callout, design: .rounded))
+                    .foregroundStyle(world.ink.opacity(0.55))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 420)
-                    .padding(.top, 4)
             }
-            .padding(40)
+            .padding(28)
             .opacity(appear ? 1 : 0)
             .scaleEffect(appear ? 1 : 0.96)
         }
         .onAppear {
-            float = true
             withAnimation(.spring(duration: 0.6)) { appear = true }
         }
     }
@@ -204,9 +217,11 @@ private struct WelcomeView: View {
 
 private struct PipelineRow: View {
     @ObservedObject var pipeline: PipelineRunner
+    let world: WorldStyle
     var body: some View {
         HStack(spacing: 11) {
-            PulseDot(color: pipeline.buildState.uiColor, active: pipeline.isWatching || pipeline.isBuilding)
+            PulseDot(color: world.tint(pipeline.buildState),
+                     active: pipeline.isWatching || pipeline.isBuilding)
             VStack(alignment: .leading, spacing: 1) {
                 Text(pipeline.config.name).lineLimit(1).font(.body.weight(.medium))
                 Text(pipeline.isWatching ? "Watching \(pipeline.config.branch)" : pipeline.buildState.label)
@@ -219,9 +234,10 @@ private struct PipelineRow: View {
 
 private struct RunnerRow: View {
     @ObservedObject var agent: RunnerAgent
+    let world: WorldStyle
     var body: some View {
         HStack(spacing: 11) {
-            PulseDot(color: agent.state.uiColor, active: agent.state.isActive)
+            PulseDot(color: world.tint(agent.state), active: agent.state.isActive)
             VStack(alignment: .leading, spacing: 1) {
                 Text(agent.instance.name).lineLimit(1).font(.body.weight(.medium))
                 Text(agent.state.label).font(.caption).foregroundStyle(.secondary)

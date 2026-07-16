@@ -14,8 +14,10 @@ struct MacONApp: App {
     @StateObject private var pool = RunnerPool()
     @StateObject private var pipelines = PipelinePool()
     @StateObject private var companion = CompanionManager()
-    @StateObject private var theme = ThemeManager.shared
     @StateObject private var curtain = PrivacyCurtain.shared
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
+
+    private var worldTheme: WorldTheme { WorldTheme(rawValue: worldRaw) ?? .pastel }
 
     var body: some Scene {
         WindowGroup {
@@ -23,9 +25,10 @@ struct MacONApp: App {
                 .environmentObject(pool)
                 .environmentObject(pipelines)
                 .environmentObject(companion)
-                .environmentObject(theme)
                 .environmentObject(curtain)
-                .tint(Brand.blue)
+                .tint(Color(nsColor: worldTheme.palette.primary))
+                // Always-dark worlds (neon, cosmos) render the whole UI dark.
+                .preferredColorScheme(worldTheme.prefersDark ? .dark : nil)
                 .task {
                     // Bring the companion server back up if it was on last time.
                     if companion.startsAtLaunch && !companion.isRunning {
