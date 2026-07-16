@@ -80,6 +80,20 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    /// Publish reachability + status to iCloud so a paired device re-points
+    /// itself automatically (e.g. when the tunnel URL rotates), and can wake/
+    /// unlock over iCloud. Off by default; dormant unless iCloud is provisioned.
+    @Published var iCloudEnabled: Bool {
+        didSet {
+            defaults.set(iCloudEnabled, forKey: iCloudKey)
+            if iCloudEnabled && isRunning { cloud.start(); publishBeacon() }
+            else { cloud.stop() }
+        }
+    }
+    var iCloudAvailable: Bool { cloud.available }
+    var iCloudActive: Bool { cloud.active }
+    var lastCloudPublish: Date? { cloud.lastPublish }
+
     /// The tunnel process/state (UI observes through this manager).
     let tunnel = TunnelManager()
 
@@ -89,6 +103,9 @@ final class CompanionManager: ObservableObject {
     private var streamer: ScreenStreamer?
     private let remote = RemoteControl()
     private let power = PowerManager()
+    private let cloud = CloudLink()
+    private var runnersProvider: (() -> [PipelineRunner])?
+    private var cloudSink: AnyCancellable?
     private let defaults = UserDefaults.standard
     private let enabledKey = "companion.enabled"
     private let portKey = "companion.port"
@@ -98,6 +115,7 @@ final class CompanionManager: ObservableObject {
     private let awakeKey = "companion.keepAwake"
     private let wakeKey = "companion.allowWake"
     private let unlockKey = "companion.allowUnlock"
+    private let iCloudKey = "companion.iCloud"
     private static let unlockAccount = "companion.unlockPassword"
     private var tunnelSink: AnyCancellable?
 
@@ -109,11 +127,28 @@ final class CompanionManager: ObservableObject {
         keepAwake = defaults.object(forKey: awakeKey) as? Bool ?? true
         allowWake = defaults.object(forKey: wakeKey) as? Bool ?? true
         allowUnlock = defaults.bool(forKey: unlockKey)     // default off (sensitive)
+        iCloudEnabled = defaults.bool(forKey: iCloudKey)   // default off
         devices = store.deviceList()
 
-        // Surface tunnel state changes through this manager's own publisher.
+        // Surface CloudLink's published state through this manager.
+        cloudSink = cloud.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        // A wake/unlock command arriving over iCloud runs the same paths as HTTP.
+        cloud.onCommand = { [weak self] kind in
+            guard let self else { return }
+            switch kind {
+            case "wake":   if self.allowWake { self.power.wake() }
+            case "unlock": if self.allowUnlock { _ = self.power.unlock(password: self.unlockPassword) }
+            default: break
+            }
+        }
+
+        // Surface tunnel state changes through this manager's own publisher —
+        // and re-publish the iCloud beacon so the device follows a new URL.
         tunnelSink = tunnel.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
+            Task { @MainActor in self?.publishBeacon() }
         }
 
         // Demand-driven capture: run only while a device is viewing.
@@ -145,6 +180,7 @@ final class CompanionManager: ObservableObject {
     func start(runnerName: String, runners: @escaping () -> [PipelineRunner],
                pool: PipelinePool? = nil) {
         guard service == nil else { return }
+        runnersProvider = runners
         defaults.set(port, forKey: portKey)
         defaults.set(true, forKey: enabledKey)
         let svc = CompanionService(
@@ -219,6 +255,30 @@ final class CompanionManager: ObservableObject {
         refreshDevices()
         if store.deviceCount == 0 { newCode() }
         syncTunnel()
+        if iCloudEnabled { cloud.start(); publishBeacon() }
+    }
+
+    /// Snapshot the current address + status into the iCloud beacon, so a
+    /// paired device auto-follows a rotated tunnel URL and can see us when the
+    /// tunnel is down. Cheap and idempotent — safe to call on any change.
+    func publishBeacon() {
+        guard iCloudEnabled, isRunning else { return }
+        let p = powerInfo()
+        let pipelines = runnersProvider?() ?? []
+        let running = pipelines.filter { $0.isBuilding }.count
+        let failed = pipelines.filter { if case .failed = $0.buildState { return true }; return false }.count
+        cloud.publish(CloudSchema.Beacon(
+            name: host,
+            tunnelURL: tunnel.publicURL,
+            lanHost: address,
+            secure: tunnel.publicURL != nil,
+            locked: p.locked,
+            displayAsleep: p.displayAsleep,
+            keepAwake: p.keepAwake,
+            running: running,
+            failed: failed,
+            mac: p.mac,
+            broadcast: p.broadcast))
     }
 
     /// Snapshot of this Mac's power/reachability state for `GET /power`.
@@ -249,6 +309,7 @@ final class CompanionManager: ObservableObject {
             if PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.lower() }
         }
         power.setKeepAwake(false)
+        cloud.stop()
         service?.stop()
         service = nil
         isRunning = false

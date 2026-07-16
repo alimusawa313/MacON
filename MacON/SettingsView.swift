@@ -317,6 +317,25 @@ struct SettingsView: View {
                     + "it never idle-sleeps, and let the device wake the display or "
                     + "unlock the screen.")
 
+            Toggle("Sync reachability over iCloud", isOn: $companion.iCloudEnabled)
+            if companion.iCloudEnabled {
+                if companion.iCloudActive {
+                    Pill(text: companion.lastCloudPublish == nil ? "Publishing…" : "Published — device auto-follows",
+                         systemImage: "cloud.fill", tint: world.good)
+                } else if !companion.iCloudAvailable {
+                    Pill(text: "Sign in to iCloud (and add the iCloud capability in Xcode)",
+                         systemImage: "exclamationmark.icloud.fill", tint: world.warm)
+                } else {
+                    Pill(text: "Starts with the companion server", systemImage: "cloud", tint: world.warm)
+                }
+                caption("Publishes this Mac's current address (incl. a rotated tunnel "
+                        + "URL) and status to your private iCloud database, so a paired "
+                        + "device on the same Apple ID re-points itself with no action "
+                        + "here. Wake/unlock can also arrive over iCloud.")
+            }
+
+            Divider().padding(.vertical, 2)
+
             Toggle("Stay awake while the companion is running", isOn: $companion.keepAwake)
             if companion.keepAwake {
                 Pill(text: companion.isRunning ? "Awake — reachable" : "Applies when the server is on",
