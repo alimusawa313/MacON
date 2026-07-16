@@ -138,8 +138,9 @@ final class CompanionManager: ObservableObject {
         cloud.onCommand = { [weak self] kind in
             guard let self else { return }
             switch kind {
-            case "wake":   if self.allowWake { self.power.wake() }
-            case "unlock": if self.allowUnlock { _ = self.power.unlock(password: self.unlockPassword) }
+            case "wake":    if self.allowWake { self.power.wake() }
+            case "unlock":  if self.allowUnlock { _ = self.power.unlock(password: self.unlockPassword) }
+            case "privacy": if self.allowUnlock, !PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.raise() }
             default: break
             }
         }
@@ -245,6 +246,12 @@ final class CompanionManager: ObservableObject {
                 await MainActor.run {
                     guard let self, self.allowUnlock else { return false }
                     return self.power.unlock(password: self.unlockPassword)
+                }
+            },
+            privacy: { [weak self] in
+                await MainActor.run {
+                    guard let self, self.allowUnlock else { return }
+                    if !PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.raise() }
                 }
             },
             onLog: { _ in })
