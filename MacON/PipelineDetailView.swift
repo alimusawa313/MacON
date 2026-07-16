@@ -9,8 +9,12 @@ import MaconKit
 struct PipelineDetailView: View {
     @ObservedObject var pipeline: PipelineRunner
     @EnvironmentObject private var pool: PipelinePool
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
     @State private var showEdit = false
     @State private var confirmDelete = false
+
+    private var world: WorldStyle { WorldStyle(raw: worldRaw, dark: scheme == .dark) }
 
     // nil = the live/current log; otherwise a past run.
     @State private var selectedRun: RunSummary?
@@ -43,14 +47,15 @@ struct PipelineDetailView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            StatusBadge(color: pipeline.buildState.uiColor, symbol: pipeline.buildState.symbol,
+            StatusBadge(color: world.tint(pipeline.buildState), symbol: pipeline.buildState.symbol,
                         active: pipeline.isWatching || pipeline.isBuilding)
             VStack(alignment: .leading, spacing: 3) {
-                Text(pipeline.config.name).font(.title2.weight(.bold))
+                Text(pipeline.config.name)
+                    .font(.system(.title2, design: .rounded).weight(.bold))
                 HStack(spacing: 6) {
                     Text(pipeline.buildState.label)
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(pipeline.buildState.uiColor)
+                        .foregroundStyle(world.tint(pipeline.buildState))
                     if pipeline.isWatching {
                         let mode = pipeline.config.triggerMode == .webhook
                             ? "webhook :\(pipeline.config.webhookPort)" : "polling"
@@ -68,15 +73,15 @@ struct PipelineDetailView: View {
             }
             Spacer()
             Button { showEdit = true } label: { Label("Edit", systemImage: "pencil") }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(ClaySoftButtonStyle(world: world))
             Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash") }
-                .buttonStyle(SoftButtonStyle(danger: true))
+                .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
         }
         .padding(18)
         .background {
-            LinearGradient(colors: [pipeline.buildState.uiColor.opacity(0.16), .clear],
+            LinearGradient(colors: [world.tint(pipeline.buildState).opacity(0.16), .clear],
                            startPoint: .leading, endPoint: .trailing)
-                .background(.regularMaterial)
+                .background(world.card)
         }
         .animation(.spring(duration: 0.4), value: pipeline.buildState)
     }
@@ -91,7 +96,7 @@ struct PipelineDetailView: View {
                     selectedRun = nil
                 } label: {
                     HStack(spacing: 8) {
-                        Dot(color: pipeline.isBuilding ? .yellow : pipeline.buildState.uiColor,
+                        Dot(color: pipeline.isBuilding ? world.warm : world.tint(pipeline.buildState),
                             glow: pipeline.isBuilding)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Live").font(.callout).bold()
@@ -120,7 +125,7 @@ struct PipelineDetailView: View {
 
     private func runRow(_ run: RunSummary) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: run.result.icon).foregroundStyle(run.result.uiColor)
+            Image(systemName: run.result.icon).foregroundStyle(world.tint(run.result))
             VStack(alignment: .leading, spacing: 1) {
                 Text(run.shaShort).font(.system(.callout, design: .monospaced))
                 Text("\(run.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(run.durationText)")
@@ -181,31 +186,31 @@ struct PipelineDetailView: View {
                 Button { pipeline.stopWatching() } label: {
                     Label("Stop Watching", systemImage: "eye.slash.fill")
                 }
-                .buttonStyle(SoftButtonStyle(danger: true))
+                .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
             } else {
                 Button { pipeline.startWatching() } label: {
                     Label("Start Watching", systemImage: "eye.fill")
                 }
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(ClayButtonStyle(world: world))
             }
             if pipeline.isBuilding {
                 Button { pipeline.cancelBuild() } label: {
                     Label("Stop Build", systemImage: "stop.fill")
                 }
-                .buttonStyle(SoftButtonStyle(danger: true))
+                .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
             } else {
                 Button { selectedRun = nil; pipeline.runNow() } label: {
                     Label("Run Now", systemImage: "play.fill")
                 }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(ClaySoftButtonStyle(world: world))
                 .help("Build the current head commit immediately")
             }
             Spacer()
             Button { pipeline.clearLog() } label: { Label("Clear", systemImage: "text.badge.xmark") }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(ClaySoftButtonStyle(world: world))
                 .disabled(pipeline.log.isEmpty || selectedRun != nil)
             Button { copyLog() } label: { Label("Copy", systemImage: "doc.on.doc") }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(ClaySoftButtonStyle(world: world))
                 .disabled(displayedLines.isEmpty)
         }
         .padding(16)

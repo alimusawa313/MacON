@@ -13,9 +13,10 @@ struct SettingsView: View {
     @EnvironmentObject private var pool: RunnerPool
     @EnvironmentObject private var pipelines: PipelinePool
     @EnvironmentObject private var companion: CompanionManager
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var curtain: PrivacyCurtain
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
     @State private var secretRows: [SecretRow] = []
     @State private var exportWithSecrets = false
     @State private var showPairing = false
@@ -24,6 +25,8 @@ struct SettingsView: View {
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
 
+    private var world: WorldStyle { WorldStyle(raw: worldRaw, dark: scheme == .dark) }
+
     var body: some View {
         VStack(spacing: 0) {
             NavigationSplitView {
@@ -31,7 +34,7 @@ struct SettingsView: View {
                     Label {
                         Text(cat.title)
                     } icon: {
-                        CategoryIcon(symbol: cat.symbol, tint: cat.tint)
+                        CategoryIcon(symbol: cat.symbol, tint: cat.tint(world))
                     }
                     .tag(cat)
                 }
@@ -46,7 +49,7 @@ struct SettingsView: View {
             footer
         }
         .frame(width: 760, height: 600)
-        .background(.regularMaterial)
+        .background(WorldBackdrop(world: world))
         .sheet(isPresented: $showPairing) { CompanionPairingView() }
         .task {
             await pool.refreshReclaimable()
@@ -89,7 +92,7 @@ struct SettingsView: View {
                 pipelines.setGlobalSecrets(secretRows.map { ($0.key, $0.value) })
                 dismiss()
             }
-            .buttonStyle(PrimaryButtonStyle())
+            .buttonStyle(ClayButtonStyle(world: world))
             .keyboardShortcut(.defaultAction)
         }
         .padding(16)
@@ -100,7 +103,6 @@ struct SettingsView: View {
 
     private func captureSnapshot() -> SettingsSnapshot {
         SettingsSnapshot(
-            themeStyle: theme.style, themeColor: theme.color,
             email: pipelines.email, apiToken: pipelines.apiToken, githubToken: pipelines.githubToken,
             port: companion.port, shareScreen: companion.shareScreen,
             allowControl: companion.allowControl, remoteEnabled: companion.remoteEnabled,
@@ -113,8 +115,6 @@ struct SettingsView: View {
     /// cleaning caches) are one-shot and intentionally not undone here.
     private func revert() {
         guard let s = snapshot else { return }
-        if theme.style != s.themeStyle { theme.style = s.themeStyle }
-        if theme.color != s.themeColor { theme.color = s.themeColor }
         if pipelines.email != s.email { pipelines.email = s.email }
         if pipelines.apiToken != s.apiToken { pipelines.apiToken = s.apiToken }
         if pipelines.githubToken != s.githubToken { pipelines.githubToken = s.githubToken }
@@ -131,10 +131,21 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         Section {
-            caption("Choose a fill style and an accent color. Applies instantly and is remembered.")
-            ThemeControls()
-                .padding(.vertical, 4)
-        } header: { FormSectionHeader(title: "Appearance", systemImage: "paintpalette.fill", tint: Brand.blue) }
+            caption("The world the whole app is made of — colors, models, and every screen's paint. "
+                    + "Shared look with the companion app; applies instantly and is remembered.")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(WorldTheme.allCases) { theme in
+                        WorldPreviewCard(theme: theme,
+                                         selected: worldRaw == theme.rawValue) {
+                            worldRaw = theme.rawValue
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 2)
+            }
+        } header: { WorldSectionHeader(title: "World", symbol: "cube.fill", world: world) }
     }
 
     private var bitbucketSection: some View {
@@ -144,11 +155,11 @@ struct SettingsView: View {
             TextField("Atlassian email", text: $pipelines.email).autocorrectionDisabled()
             SecureField("API token", text: $pipelines.apiToken)
             if pipelines.credentials.isComplete {
-                Pill(text: "Account set", systemImage: "checkmark.seal.fill", tint: Brand.emerald)
+                Pill(text: "Account set", systemImage: "checkmark.seal.fill", tint: world.good)
             } else {
-                Pill(text: "Incomplete", systemImage: "exclamationmark.triangle.fill", tint: Brand.amber)
+                Pill(text: "Incomplete", systemImage: "exclamationmark.triangle.fill", tint: world.warm)
             }
-        } header: { FormSectionHeader(title: "Bitbucket account", systemImage: "cloud.fill", tint: Brand.blue) }
+        } header: { WorldSectionHeader(title: "Bitbucket account", symbol: "cloud.fill", world: world) }
     }
 
     private var githubSection: some View {
@@ -157,11 +168,11 @@ struct SettingsView: View {
                     + "fine-grained: Contents + Commit statuses + Pull requests).")
             SecureField("Personal Access Token", text: $pipelines.githubToken)
             if pipelines.hasCredentials(for: .github) {
-                Pill(text: "Token set", systemImage: "checkmark.seal.fill", tint: Brand.emerald)
+                Pill(text: "Token set", systemImage: "checkmark.seal.fill", tint: world.good)
             } else {
-                Pill(text: "Not set", systemImage: "exclamationmark.triangle.fill", tint: Brand.amber)
+                Pill(text: "Not set", systemImage: "exclamationmark.triangle.fill", tint: world.warm)
             }
-        } header: { FormSectionHeader(title: "GitHub account", systemImage: "chevron.left.forwardslash.chevron.right", tint: Brand.indigo) }
+        } header: { WorldSectionHeader(title: "GitHub account", symbol: "chevron.left.forwardslash.chevron.right", world: world) }
     }
 
     private var secretsSection: some View {
@@ -180,15 +191,15 @@ struct SettingsView: View {
                         .labelsHidden()
                     Button(role: .destructive) {
                         secretRows.removeAll { $0.id == row.id }
-                    } label: { Image(systemName: "minus.circle.fill").foregroundStyle(Brand.rose) }
+                    } label: { Image(systemName: "minus.circle.fill").foregroundStyle(world.bad) }
                         .buttonStyle(.borderless)
                 }
             }
             Button { secretRows.append(SecretRow(key: "", value: "")) } label: {
                 Label("Add secret", systemImage: "plus")
             }
-            .buttonStyle(SoftButtonStyle())
-        } header: { FormSectionHeader(title: "Global secrets", systemImage: "key.fill", tint: Brand.amber) }
+            .buttonStyle(ClaySoftButtonStyle(world: world))
+        } header: { WorldSectionHeader(title: "Global secrets", symbol: "key.fill", world: world, tint: world.warm) }
     }
 
     private var portableSection: some View {
@@ -198,15 +209,15 @@ struct SettingsView: View {
             Toggle("Include secrets & tokens in the file", isOn: $exportWithSecrets)
             if exportWithSecrets {
                 Pill(text: "Contains tokens in plain text — keep private",
-                     systemImage: "exclamationmark.triangle.fill", tint: Brand.amber)
+                     systemImage: "exclamationmark.triangle.fill", tint: world.warm)
             }
             HStack {
                 Button { exportConfig() } label: { Label("Export…", systemImage: "square.and.arrow.up") }
-                    .buttonStyle(SoftButtonStyle())
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
                 Button { importConfig() } label: { Label("Import…", systemImage: "square.and.arrow.down") }
-                    .buttonStyle(SoftButtonStyle())
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
             }
-        } header: { FormSectionHeader(title: "Portable config", systemImage: "terminal.fill", tint: Brand.cyan) }
+        } header: { WorldSectionHeader(title: "Portable config", symbol: "terminal.fill", world: world) }
     }
 
     private var companionSection: some View {
@@ -232,10 +243,10 @@ struct SettingsView: View {
             if companion.isRunning {
                 HStack {
                     Pill(text: "Listening on \(companion.address)",
-                         systemImage: "dot.radiowaves.left.and.right", tint: Brand.emerald)
+                         systemImage: "dot.radiowaves.left.and.right", tint: world.good)
                     Spacer()
                     Button { showPairing = true } label: { Label("Pair a device…", systemImage: "qrcode") }
-                        .buttonStyle(SoftButtonStyle())
+                        .buttonStyle(ClaySoftButtonStyle(world: world))
                 }
                 if !companion.devices.isEmpty {
                     caption("\(companion.devices.count) paired device(s)")
@@ -248,9 +259,9 @@ struct SettingsView: View {
             Toggle("Let paired devices control this Mac (cursor & keyboard)", isOn: $companion.allowControl)
             if companion.allowControl {
                 Pill(text: "Grant Accessibility in System Settings → Privacy & Security",
-                     systemImage: "exclamationmark.triangle.fill", tint: Brand.amber)
+                     systemImage: "exclamationmark.triangle.fill", tint: world.warm)
             }
-        } header: { FormSectionHeader(title: "Companion app", systemImage: "ipad.and.iphone", tint: Brand.blue) }
+        } header: { WorldSectionHeader(title: "Companion app", symbol: "ipad.and.iphone", world: world) }
     }
 
     /// Tunnel state row(s) under the remote-access toggle.
@@ -264,20 +275,20 @@ struct SettingsView: View {
         case .notInstalled:
             HStack(spacing: 8) {
                 Pill(text: "cloudflared is not installed",
-                     systemImage: "exclamationmark.triangle.fill", tint: Brand.amber)
+                     systemImage: "exclamationmark.triangle.fill", tint: world.warm)
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString("brew install cloudflared", forType: .string)
                 } label: { Label("Copy install command", systemImage: "doc.on.doc") }
-                    .buttonStyle(SoftButtonStyle())
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
                 Spacer()
             }
         case .starting:
-            Pill(text: "Starting tunnel…", systemImage: "clock.fill", tint: Brand.cyan)
+            Pill(text: "Starting tunnel…", systemImage: "clock.fill", tint: world.primary)
         case .running(let url):
             HStack(spacing: 8) {
                 Pill(text: url.replacingOccurrences(of: "https://", with: ""),
-                     systemImage: "globe", tint: Brand.emerald)
+                     systemImage: "globe", tint: world.good)
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url, forType: .string)
@@ -291,9 +302,9 @@ struct SettingsView: View {
                     + "(no re-pairing needed).")
         case .failed(let message):
             HStack(spacing: 8) {
-                Pill(text: message, systemImage: "xmark.octagon.fill", tint: Brand.rose)
+                Pill(text: message, systemImage: "xmark.octagon.fill", tint: world.bad)
                 Button("Retry") { companion.remoteEnabled = false; companion.remoteEnabled = true }
-                    .buttonStyle(SoftButtonStyle())
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
                 Spacer()
             }
         }
@@ -335,12 +346,12 @@ struct SettingsView: View {
             if curtain.style.background == .image {
                 HStack(spacing: 10) {
                     Button { chooseCurtainImage() } label: { Label("Choose Image…", systemImage: "photo") }
-                        .buttonStyle(SoftButtonStyle())
+                        .buttonStyle(ClaySoftButtonStyle(world: world))
                     if curtain.style.imagePath != nil {
                         Button(role: .destructive) { curtain.clearCustomImage() } label: {
                             Label("Remove", systemImage: "trash")
                         }
-                        .buttonStyle(SoftButtonStyle(danger: true))
+                        .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
                     } else {
                         caption("No image chosen yet.")
                     }
@@ -352,7 +363,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Color").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 12) {
-                    ForEach(ThemeColor.allCases) { c in
+                    ForEach(CurtainColor.allCases) { c in
                         Circle()
                             .fill(c.gradient)
                             .frame(width: 28, height: 28)
@@ -365,30 +376,32 @@ struct SettingsView: View {
                 }
             }
 
-            // Glyph.
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Symbol").font(.caption).foregroundStyle(.secondary)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(curtainGlyphOptions, id: \.self) { g in
-                            Image(systemName: g)
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(curtain.style.glyph == g ? AnyShapeStyle(curtain.style.color.gradient) : AnyShapeStyle(Color.secondary))
-                                .frame(width: 40, height: 34)
-                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .strokeBorder(curtain.style.glyph == g ? curtain.style.color.base : .white.opacity(0.08),
-                                                  lineWidth: curtain.style.glyph == g ? 2 : 1))
-                                .onTapGesture { withAnimation { curtain.style.glyph = g } }
+            // Glyph — replaced by the 3D machine in the World style.
+            if curtain.style.background != .world {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Symbol").font(.caption).foregroundStyle(.secondary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(curtainGlyphOptions, id: \.self) { g in
+                                Image(systemName: g)
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(curtain.style.glyph == g ? AnyShapeStyle(curtain.style.color.gradient) : AnyShapeStyle(Color.secondary))
+                                    .frame(width: 40, height: 34)
+                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .strokeBorder(curtain.style.glyph == g ? curtain.style.color.base : .white.opacity(0.08),
+                                                      lineWidth: curtain.style.glyph == g ? 2 : 1))
+                                    .onTapGesture { withAnimation { curtain.style.glyph = g } }
+                            }
                         }
+                        .padding(.vertical, 1)
                     }
-                    .padding(.vertical, 1)
                 }
-            }
 
-            // Symbol animation.
-            Picker("Symbol animation", selection: $curtain.style.glyphAnimation) {
-                ForEach(CurtainGlyphAnimation.allCases) { Text($0.title).tag($0) }
+                // Symbol animation.
+                Picker("Symbol animation", selection: $curtain.style.glyphAnimation) {
+                    ForEach(CurtainGlyphAnimation.allCases) { Text($0.title).tag($0) }
+                }
             }
 
             Toggle("Show the “Press ⌃⌥⌘U to unlock” hint", isOn: $curtain.style.showHint)
@@ -411,33 +424,33 @@ struct SettingsView: View {
                 Button("Save") {
                     curtain.setPasscode(newPasscode); newPasscode = ""
                 }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(ClaySoftButtonStyle(world: world))
                 .disabled(newPasscode.isEmpty)
                 if curtain.hasPasscode {
                     Button(role: .destructive) { curtain.clearPasscode() } label: {
-                        Image(systemName: "trash").foregroundStyle(Brand.rose)
+                        Image(systemName: "trash").foregroundStyle(world.bad)
                     }
                     .buttonStyle(.borderless)
                     .help("Remove passcode")
                 }
             }
             if curtain.hasPasscode {
-                Pill(text: "Passcode required to unlock", systemImage: "lock.fill", tint: Brand.emerald)
+                Pill(text: "Passcode required to unlock", systemImage: "lock.fill", tint: world.good)
             } else {
                 Pill(text: "No passcode — anyone can unlock with the hot key",
-                     systemImage: "lock.open.fill", tint: Brand.amber)
+                     systemImage: "lock.open.fill", tint: world.warm)
             }
 
             HStack {
                 Button {
                     curtain.raise(); dismiss()
                 } label: { Label("Raise Privacy Screen", systemImage: "hand.raised.fill") }
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(ClayButtonStyle(world: world))
                 .disabled(curtain.isUp)
                 Spacer()
-                Pill(text: "Unlock with ⌃⌥⌘U", systemImage: "keyboard", tint: Brand.cyan)
+                Pill(text: "Unlock with ⌃⌥⌘U", systemImage: "keyboard", tint: world.primary)
             }
-        } header: { FormSectionHeader(title: "Privacy screen", systemImage: "hand.raised.fill", tint: Brand.indigo) }
+        } header: { WorldSectionHeader(title: "Privacy screen", symbol: "hand.raised.fill", world: world, tint: world.warm) }
     }
 
     private var cleanupSection: some View {
@@ -455,17 +468,17 @@ struct SettingsView: View {
                     if pool.isCleaningCaches { ProgressView().controlSize(.small) }
                     else { Label("Clean Caches Now", systemImage: "trash.fill") }
                 }
-                .buttonStyle(SoftButtonStyle(danger: true))
+                .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
                 .disabled(pool.anyActive || pool.isCleaningCaches)
                 Spacer()
                 if pool.anyActive {
-                    Pill(text: "Stop all runners first", systemImage: "exclamationmark.circle.fill", tint: Brand.amber)
+                    Pill(text: "Stop all runners first", systemImage: "exclamationmark.circle.fill", tint: world.warm)
                 } else if pool.reclaimableBytes > 0 {
                     Pill(text: "~\(ByteCountFormatter.string(fromByteCount: pool.reclaimableBytes, countStyle: .file)) reclaimable",
-                         systemImage: "internaldrive.fill", tint: Brand.cyan)
+                         systemImage: "internaldrive.fill", tint: world.primary)
                 }
             }
-        } header: { FormSectionHeader(title: "Cleanup", systemImage: "sparkles", tint: Brand.emerald) }
+        } header: { WorldSectionHeader(title: "Cleanup", symbol: "sparkles", world: world, tint: world.good) }
     }
 
     private func caption(_ text: String) -> some View {
@@ -511,8 +524,6 @@ struct SettingsView: View {
 /// The live-applied settings captured when the sheet opens, so Cancel can
 /// restore them exactly.
 struct SettingsSnapshot {
-    var themeStyle: ThemeStyle
-    var themeColor: ThemeColor
     var email: String
     var apiToken: String
     var githubToken: String
@@ -535,7 +546,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .appearance: return "Appearance"
+        case .appearance: return "World"
         case .accounts:   return "Accounts"
         case .secrets:    return "Global Secrets"
         case .companion:  return "Companion"
@@ -547,7 +558,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .appearance: return "paintpalette.fill"
+        case .appearance: return "cube.fill"
         case .accounts:   return "person.crop.circle.fill"
         case .secrets:    return "key.fill"
         case .companion:  return "ipad.and.iphone"
@@ -557,15 +568,15 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         }
     }
 
-    var tint: Color {
+    func tint(_ world: WorldStyle) -> Color {
         switch self {
-        case .appearance: return Brand.blue
-        case .accounts:   return Brand.indigo
-        case .secrets:    return Brand.amber
-        case .companion:  return Brand.blue
-        case .privacy:    return Brand.indigo
-        case .portable:   return Brand.cyan
-        case .cleanup:    return Brand.emerald
+        case .appearance: return world.primary
+        case .accounts:   return world.warm
+        case .secrets:    return world.warm
+        case .companion:  return world.primary
+        case .privacy:    return world.bad
+        case .portable:   return world.good
+        case .cleanup:    return world.good
         }
     }
 }
@@ -584,5 +595,53 @@ private struct CategoryIcon: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
             )
+    }
+}
+
+// MARK: - World preview card
+
+/// One world in the gallery: a real rendered snapshot of its station over
+/// its own backdrop, with the world's name below.
+private struct WorldPreviewCard: View {
+    @Environment(\.colorScheme) private var scheme
+    let theme: WorldTheme
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let accent = Color(nsColor: theme.palette.primary)
+        Button(action: action) {
+            VStack(spacing: 7) {
+                ZStack {
+                    LinearGradient(
+                        colors: [Color(nsColor: theme.palette.paper(dark: scheme == .dark)),
+                                 Color(nsColor: theme.palette.edge(dark: scheme == .dark))],
+                        startPoint: .top, endPoint: .bottom)
+                    Image(nsImage: WorldPreview.image(for: theme, dark: scheme == .dark))
+                        .resizable()
+                        .scaledToFill()
+                }
+                .frame(width: 96, height: 154)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(selected ? accent : Color.primary.opacity(0.08),
+                                      lineWidth: selected ? 2.5 : 1)
+                }
+                .scaleEffect(hovering && !selected ? 1.03 : 1)
+                .animation(.spring(duration: 0.25), value: hovering)
+
+                HStack(spacing: 4) {
+                    Image(systemName: theme.icon).font(.system(size: 9))
+                    Text(theme.label)
+                }
+                .font(.system(.caption2, design: .rounded).weight(selected ? .bold : .medium))
+                .foregroundStyle(selected ? accent : .secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(theme.label)
     }
 }

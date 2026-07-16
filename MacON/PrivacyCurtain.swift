@@ -266,12 +266,60 @@ final class GlobalHotKey {
     }
 }
 
+// MARK: - Curtain colors
+
+/// The curtain's accent presets — persisted by name (same names as the old
+/// app-wide theme colors, so existing saved styles decode unchanged).
+enum CurtainColor: String, CaseIterable, Identifiable, Codable {
+    case blue, purple, pink, red, orange, green
+    var id: String { rawValue }
+
+    private static func rgb(_ r: Double, _ g: Double, _ b: Double) -> Color {
+        Color(red: r, green: g, blue: b)
+    }
+
+    var base: Color {
+        switch self {
+        case .blue:   return Self.rgb(0.231, 0.510, 0.965)
+        case .purple: return Self.rgb(0.541, 0.286, 0.968)
+        case .pink:   return Self.rgb(0.925, 0.263, 0.600)
+        case .red:    return Self.rgb(0.918, 0.243, 0.310)
+        case .orange: return Self.rgb(0.961, 0.545, 0.114)
+        case .green:  return Self.rgb(0.106, 0.694, 0.427)
+        }
+    }
+    var partner: Color {
+        switch self {
+        case .blue:   return Self.rgb(0.388, 0.400, 0.945)
+        case .purple: return Self.rgb(0.729, 0.333, 0.929)
+        case .pink:   return Self.rgb(0.976, 0.451, 0.451)
+        case .red:    return Self.rgb(0.976, 0.435, 0.267)
+        case .orange: return Self.rgb(0.976, 0.412, 0.180)
+        case .green:  return Self.rgb(0.153, 0.741, 0.671)
+        }
+    }
+    var accent: Color {
+        switch self {
+        case .blue:   return Self.rgb(0.204, 0.722, 0.949)
+        case .purple: return Self.rgb(0.647, 0.549, 0.976)
+        case .pink:   return Self.rgb(0.976, 0.545, 0.741)
+        case .red:    return Self.rgb(0.976, 0.529, 0.451)
+        case .orange: return Self.rgb(0.988, 0.741, 0.290)
+        case .green:  return Self.rgb(0.290, 0.831, 0.643)
+        }
+    }
+    /// Diagonal gradient of this color (base → partner).
+    var gradient: LinearGradient {
+        LinearGradient(colors: [base, partner], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
 // MARK: - Style model
 
 /// What the wall looks like. Persisted as JSON.
 struct CurtainStyle: Codable, Equatable {
     var background: CurtainBackground = .aurora
-    var color: ThemeColor = .blue
+    var color: CurtainColor = .blue
     var glyph: String = "hand.raised.fill"
     var glyphAnimation: CurtainGlyphAnimation = .breathe
     var showHint: Bool = true
@@ -287,7 +335,7 @@ struct CurtainStyle: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         background     = try c.decodeIfPresent(CurtainBackground.self, forKey: .background) ?? .aurora
-        color          = try c.decodeIfPresent(ThemeColor.self, forKey: .color) ?? .blue
+        color          = try c.decodeIfPresent(CurtainColor.self, forKey: .color) ?? .blue
         glyph          = try c.decodeIfPresent(String.self, forKey: .glyph) ?? "hand.raised.fill"
         glyphAnimation = try c.decodeIfPresent(CurtainGlyphAnimation.self, forKey: .glyphAnimation) ?? .breathe
         showHint       = try c.decodeIfPresent(Bool.self, forKey: .showHint) ?? true
@@ -329,7 +377,7 @@ enum CurtainMotion: String, CaseIterable, Identifiable, Codable {
 }
 
 enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
-    case aurora, gradient, solid, black, starfield, waves, orbs, rays, image
+    case aurora, gradient, solid, black, starfield, waves, orbs, rays, image, world
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -342,6 +390,7 @@ enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
         case .orbs:      return "Orbs"
         case .rays:      return "Rays"
         case .image:     return "Image"
+        case .world:     return "3D World"
         }
     }
     var symbol: String {
@@ -355,6 +404,7 @@ enum CurtainBackground: String, CaseIterable, Identifiable, Codable {
         case .orbs:      return "circle.hexagongrid.fill"
         case .rays:      return "rays"
         case .image:     return "photo.fill"
+        case .world:     return "cube.fill"
         }
     }
 }
@@ -457,13 +507,17 @@ struct CurtainBackdrop: View {
                 }
                 Color.black.opacity(0.45)
             }
+        case .world:
+            // The world's dark paper — the 3D machine itself rides along with
+            // the moving foreground (see CurtainStage).
+            WorldBackdrop(world: WorldStyle.current(dark: true))
         }
     }
 }
 
 /// Slow color-tinted mesh (curtain flavor of AuroraBackground).
 private struct CurtainAurora: View {
-    var color: ThemeColor
+    var color: CurtainColor
     private var colors: [Color] {
         let a = color.base, b = color.partner, d = color.accent
         return [b, a, d, a, b, a, d, a, b]
@@ -520,7 +574,7 @@ private struct Starfield: View {
 
 /// Flowing stacked sine waves.
 private struct CurtainWaves: View {
-    var color: ThemeColor
+    var color: CurtainColor
     var body: some View {
         TimelineView(.animation) { ctx in
             let t = ctx.date.timeIntervalSinceReferenceDate
@@ -553,7 +607,7 @@ private struct CurtainWaves: View {
 
 /// Big soft blurred orbs drifting slowly (bokeh).
 private struct CurtainOrbs: View {
-    var color: ThemeColor
+    var color: CurtainColor
     private let seeds = Array(0..<6)
     var body: some View {
         GeometryReader { geo in
@@ -580,7 +634,7 @@ private struct CurtainOrbs: View {
 
 /// Slowly rotating conic glow.
 private struct CurtainRays: View {
-    var color: ThemeColor
+    var color: CurtainColor
     var body: some View {
         TimelineView(.animation) { ctx in
             let t = ctx.date.timeIntervalSinceReferenceDate
@@ -646,8 +700,10 @@ struct CurtainStage: View {
         GeometryReader { geo in
             TimelineView(.animation) { ctx in
                 let t = ctx.date.timeIntervalSinceReferenceDate
+                // The 3D machine is taller than the glyph — keep it on-screen.
+                let halfH: CGFloat = style.background == .world ? 330 : 200
                 let ax = max(0, geo.size.width / 2 - min(geo.size.width * 0.30, 380))
-                let ay = max(0, geo.size.height / 2 - min(geo.size.height * 0.24, 200))
+                let ay = max(0, geo.size.height / 2 - min(geo.size.height * 0.24, halfH))
                 foreground
                     .position(x: geo.size.width / 2 + triWave(t * 0.045) * ax,
                               y: geo.size.height / 2 + triWave(t * 0.032) * ay)
@@ -657,16 +713,24 @@ struct CurtainStage: View {
 
     private var foreground: some View {
         VStack(spacing: 22) {
-            ZStack {
-                Circle().fill(style.color.base.opacity(0.16))
-                    .frame(width: 128, height: 128)
-                    .scaleEffect(pulse ? 1.12 : 0.94)
-                Image(systemName: style.glyph)
-                    .font(.system(size: 54, weight: .semibold))
-                    .foregroundStyle(style.color.gradient)
-                    .modifier(GlyphEffect(kind: animate ? style.glyphAnimation : .none))
+            if style.background == .world {
+                // The world's signature clay piece is the wandering mascot
+                // (gear, blob, brick tower, balloon, donut, planet) — it
+                // drifts or DVD-bounces with the rest of the foreground.
+                WorldSprite(dark: true, theme: WorldStyle.current(dark: true).theme)
+                    .frame(width: 280, height: 300)
+            } else {
+                ZStack {
+                    Circle().fill(style.color.base.opacity(0.16))
+                        .frame(width: 128, height: 128)
+                        .scaleEffect(pulse ? 1.12 : 0.94)
+                    Image(systemName: style.glyph)
+                        .font(.system(size: 54, weight: .semibold))
+                        .foregroundStyle(style.color.gradient)
+                        .modifier(GlyphEffect(kind: animate ? style.glyphAnimation : .none))
+                }
+                .animation(animate ? .easeInOut(duration: 1.8).repeatForever(autoreverses: true) : nil, value: pulse)
             }
-            .animation(animate ? .easeInOut(duration: 1.8).repeatForever(autoreverses: true) : nil, value: pulse)
 
             VStack(spacing: 8) {
                 Text(message)
@@ -742,6 +806,8 @@ private struct CurtainView: View {
         }
     }
 
+    private var world: WorldStyle { .current(dark: true) }
+
     private var passcodeCard: some View {
         VStack(spacing: 12) {
             Text("Enter passcode to unlock").font(.headline).foregroundStyle(.white)
@@ -752,9 +818,9 @@ private struct CurtainView: View {
                 .onSubmit { curtain.submit(code) }
             HStack(spacing: 10) {
                 Button("Cancel") { curtain.cancelUnlock() }
-                    .buttonStyle(SoftButtonStyle())
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
                 Button("Unlock") { curtain.submit(code) }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(ClayButtonStyle(world: world))
                     .keyboardShortcut(.defaultAction)
             }
         }

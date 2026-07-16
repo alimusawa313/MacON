@@ -8,17 +8,10 @@
 import SwiftUI
 import MaconKit
 
-// MARK: - UI colour mappings for core enums
+// MARK: - UI symbol mappings for core enums
+// State colors come from the selected world palette — see WorldStyle.tint(_:).
 
 extension RunnerState {
-    var uiColor: Color {
-        switch self {
-        case .running:  return Brand.emerald
-        case .starting: return Brand.amber
-        case .stopped:  return .gray
-        case .crashed:  return Brand.rose
-        }
-    }
     var symbol: String {
         switch self {
         case .stopped:  return "pause.fill"
@@ -30,30 +23,12 @@ extension RunnerState {
 }
 
 extension BuildState {
-    var uiColor: Color {
-        switch self {
-        case .idle:      return .gray
-        case .running:   return Brand.amber
-        case .succeeded: return Brand.emerald
-        case .failed:    return Brand.rose
-        }
-    }
     var symbol: String {
         switch self {
         case .idle:      return "bolt.horizontal.fill"
         case .running:   return "hammer.fill"
         case .succeeded: return "checkmark"
         case .failed:    return "xmark"
-        }
-    }
-}
-
-extension RunResult {
-    var uiColor: Color {
-        switch self {
-        case .succeeded: return Brand.emerald
-        case .failed:    return Brand.rose
-        case .cancelled: return Brand.amber
         }
     }
 }
@@ -104,11 +79,6 @@ struct Dot: View {
             .overlay(Circle().stroke(.black.opacity(0.1)))
             .shadow(color: color.opacity(0.6), radius: glow ? 4 : 0)
     }
-}
-
-struct StatusDot: View {
-    let state: RunnerState
-    var body: some View { Dot(color: state.uiColor, glow: state.isActive) }
 }
 
 // MARK: - Live log console
@@ -187,15 +157,19 @@ struct RawStringLog: View {
 
 struct StructuredLog: View {
     let lines: [LogLine]
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
     @State private var expanded: Set<Int> = []
 
     private var sections: [LogSection] { parseLogSections(lines) }
+    private var world: WorldStyle { WorldStyle(raw: worldRaw, dark: scheme == .dark) }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 6) {
                 ForEach(sections) { section in
-                    StepRow(section: section, isOpen: expanded.contains(section.id)) {
+                    StepRow(section: section, world: world,
+                            isOpen: expanded.contains(section.id)) {
                         withAnimation(.spring(duration: 0.28)) {
                             if expanded.contains(section.id) { expanded.remove(section.id) }
                             else { expanded.insert(section.id) }
@@ -219,14 +193,15 @@ struct StructuredLog: View {
 /// terminal-style body when expanded.
 private struct StepRow: View {
     let section: LogSection
+    let world: WorldStyle
     let isOpen: Bool
     let toggle: () -> Void
     @State private var hover = false
     @State private var copied = false
 
     private var tint: Color {
-        if section.failed { return Brand.rose }
-        if section.succeeded { return Brand.emerald }
+        if section.failed { return world.bad }
+        if section.succeeded { return world.good }
         return .secondary
     }
     private var kindIcon: String {
@@ -291,7 +266,7 @@ private struct StepRow: View {
         } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(copied ? Brand.emerald : .secondary)
+                .foregroundStyle(copied ? world.good : .secondary)
                 .frame(width: 22, height: 22)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
@@ -312,9 +287,9 @@ private struct StepRow: View {
     private var node: some View {
         Group {
             if section.failed {
-                badge(Brand.rose, "xmark")
+                badge(world.bad, "xmark")
             } else if section.succeeded {
-                badge(Brand.emerald, "checkmark")
+                badge(world.good, "checkmark")
             } else {
                 ZStack {
                     Circle().strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1.5)
@@ -333,9 +308,9 @@ private struct StepRow: View {
     }
 
     private func lineColor(_ text: String) -> Color {
-        if text.contains("❌") || text.contains("error") || text.contains("failed") { return Brand.rose }
-        if text.hasPrefix("⚠︎") || text.contains("warning") { return Brand.amber }
-        if text.contains("✅") || text.hasPrefix("✓") { return Brand.emerald }
+        if text.contains("❌") || text.contains("error") || text.contains("failed") { return world.bad }
+        if text.hasPrefix("⚠︎") || text.contains("warning") { return world.warm }
+        if text.contains("✅") || text.hasPrefix("✓") { return world.good }
         if text.hasPrefix("$") || text.hasPrefix("▸") { return .secondary }
         return .primary
     }

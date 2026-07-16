@@ -16,6 +16,8 @@ struct PipelineEditView: View {
     @ObservedObject var pipeline: PipelineRunner
     @EnvironmentObject private var pool: PipelinePool
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
 
     @State private var repos: [String] = []
     @State private var branches: [String] = []
@@ -23,13 +25,15 @@ struct PipelineEditView: View {
     @State private var loadError: String?
     @State private var secretRows: [SecretRow] = []
 
+    private var world: WorldStyle { WorldStyle(raw: worldRaw, dark: scheme == .dark) }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Form {
                 Section {
                     TextField("Name", text: $pipeline.config.name)
-                } header: { FormSectionHeader(title: "Pipeline", systemImage: "bolt.horizontal.fill", tint: Brand.blue) }
+                } header: { WorldSectionHeader(title: "Pipeline", symbol: "bolt.horizontal.fill", world: world) }
 
                 Section {
                     Picker("Provider", selection: $pipeline.config.provider) {
@@ -43,10 +47,10 @@ struct PipelineEditView: View {
                         Label("Set your \(pipeline.config.provider.label) credentials in Settings to "
                               + "load repos and branches. Until then, enter values manually:",
                               systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption).foregroundStyle(Brand.amber)
+                            .font(.caption).foregroundStyle(world.warm)
                         manualFields
                     }
-                } header: { FormSectionHeader(title: "Repository", systemImage: "arrow.triangle.branch", tint: Brand.indigo) }
+                } header: { WorldSectionHeader(title: "Repository", symbol: "arrow.triangle.branch", world: world) }
 
                 Section {
                     LabeledContent("Pipeline file") {
@@ -105,10 +109,10 @@ struct PipelineEditView: View {
                             TextField("", text: $pipeline.config.workingDirectory)
                                 .textFieldStyle(.roundedBorder)
                             Button("Choose…") { chooseDir() }
-                                .buttonStyle(SoftButtonStyle())
+                                .buttonStyle(ClaySoftButtonStyle(world: world))
                         }
                     }
-                } header: { FormSectionHeader(title: "Build", systemImage: "hammer.fill", tint: Brand.amber) }
+                } header: { WorldSectionHeader(title: "Build", symbol: "hammer.fill", world: world, tint: world.good) }
 
                 Section {
                     Text("Stored in the macOS Keychain, never in the repo. For TestFlight "
@@ -126,15 +130,15 @@ struct PipelineEditView: View {
                                 .labelsHidden()
                             Button(role: .destructive) {
                                 secretRows.removeAll { $0.id == row.id }
-                            } label: { Image(systemName: "minus.circle.fill").foregroundStyle(Brand.rose) }
+                            } label: { Image(systemName: "minus.circle.fill").foregroundStyle(world.bad) }
                                 .buttonStyle(.borderless)
                         }
                     }
                     Button { secretRows.append(SecretRow(key: "", value: "")) } label: {
                         Label("Add secret", systemImage: "plus")
                     }
-                    .buttonStyle(SoftButtonStyle())
-                } header: { FormSectionHeader(title: "Secrets", systemImage: "key.fill", tint: Brand.amber) }
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
+                } header: { WorldSectionHeader(title: "Secrets", symbol: "key.fill", world: world, tint: world.warm) }
 
                 Section {
                     Picker("Watch", selection: $pipeline.config.watchMode) {
@@ -188,7 +192,7 @@ struct PipelineEditView: View {
 
                     Toggle("Post build status to commits",
                            isOn: $pipeline.config.postStatus)
-                } header: { FormSectionHeader(title: "Trigger", systemImage: "dot.radiowaves.left.and.right", tint: Brand.cyan) }
+                } header: { WorldSectionHeader(title: "Trigger", symbol: "dot.radiowaves.left.and.right", world: world, tint: world.warm) }
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
@@ -196,7 +200,7 @@ struct PipelineEditView: View {
             footer
         }
         .frame(width: 560, height: 680)
-        .background(.regularMaterial)
+        .background(WorldBackdrop(world: world))
         .task { loadSecretRows(); await reloadAll() }
         .onChange(of: pipeline.config.repoSlug) {
             pipeline.config.branch = ""
@@ -210,9 +214,9 @@ struct PipelineEditView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            IconTile(systemImage: "slider.horizontal.3")
+            ClayTile(systemImage: "slider.horizontal.3", fill: world.primary)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Edit Pipeline").font(.title2.weight(.bold))
+                Text("Edit Pipeline").font(.system(.title2, design: .rounded).weight(.bold))
                 Text(pipeline.config.name.isEmpty ? "New pipeline" : pipeline.config.name)
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -220,8 +224,8 @@ struct PipelineEditView: View {
         }
         .padding(18)
         .background {
-            LinearGradient(colors: [Brand.blue.opacity(0.16), .clear], startPoint: .leading, endPoint: .trailing)
-                .background(.regularMaterial)
+            LinearGradient(colors: [world.primary.opacity(0.16), .clear], startPoint: .leading, endPoint: .trailing)
+                .background(world.card)
         }
     }
 
@@ -229,7 +233,7 @@ struct PipelineEditView: View {
         HStack {
             Spacer()
             Button("Done") { commitSecrets(); pool.commitEdits(); dismiss() }
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(ClayButtonStyle(world: world))
                 .keyboardShortcut(.defaultAction)
         }
         .padding(16)

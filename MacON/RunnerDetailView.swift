@@ -11,8 +11,12 @@ import MaconKit
 struct RunnerDetailView: View {
     @ObservedObject var agent: RunnerAgent
     @EnvironmentObject private var pool: RunnerPool
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
     @State private var showEdit = false
     @State private var confirmDelete = false
+
+    private var world: WorldStyle { WorldStyle(raw: worldRaw, dark: scheme == .dark) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,13 +40,14 @@ struct RunnerDetailView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            StatusBadge(color: agent.state.uiColor, symbol: agent.state.symbol, active: agent.state.isActive)
+            StatusBadge(color: world.tint(agent.state), symbol: agent.state.symbol, active: agent.state.isActive)
             VStack(alignment: .leading, spacing: 3) {
-                Text(agent.instance.name).font(.title2.weight(.bold))
+                Text(agent.instance.name)
+                    .font(.system(.title2, design: .rounded).weight(.bold))
                 HStack(spacing: 6) {
                     Text(agent.state.label)
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(agent.state.uiColor)
+                        .foregroundStyle(world.tint(agent.state))
                     if let started = agent.startedAt {
                         Text("· up since \(started.formatted(date: .omitted, time: .shortened))")
                             .font(.caption).foregroundStyle(.secondary)
@@ -51,15 +56,15 @@ struct RunnerDetailView: View {
             }
             Spacer()
             Button { showEdit = true } label: { Label("Edit", systemImage: "pencil") }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(ClaySoftButtonStyle(world: world))
             Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash") }
-                .buttonStyle(SoftButtonStyle(danger: true))
+                .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
         }
         .padding(18)
         .background {
-            LinearGradient(colors: [agent.state.uiColor.opacity(0.16), .clear],
+            LinearGradient(colors: [world.tint(agent.state).opacity(0.16), .clear],
                            startPoint: .leading, endPoint: .trailing)
-                .background(.regularMaterial)
+                .background(world.card)
         }
         .animation(.spring(duration: 0.4), value: agent.state)
     }
@@ -70,12 +75,12 @@ struct RunnerDetailView: View {
                 Button { agent.stop() } label: {
                     Label("Stop", systemImage: "stop.fill")
                 }
-                .buttonStyle(SoftButtonStyle(danger: true))
+                .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
             } else {
                 Button { agent.start() } label: {
                     Label("Start", systemImage: "play.fill")
                 }
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(ClayButtonStyle(world: world))
                 .disabled(agent.instance.startCommand.trimmingCharacters(in: .whitespaces).isEmpty)
             }
 
@@ -88,17 +93,17 @@ struct RunnerDetailView: View {
                     Label("Empty Workdir", systemImage: "trash")
                 }
             }
-            .buttonStyle(SoftButtonStyle())
+            .buttonStyle(ClaySoftButtonStyle(world: world))
             .disabled(agent.state.isActive || agent.isCleaning)
             .help("Delete this runner's working-directory contents")
 
             Spacer()
 
             Button { agent.clearLog() } label: { Label("Clear", systemImage: "text.badge.xmark") }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(ClaySoftButtonStyle(world: world))
                 .disabled(agent.log.isEmpty)
             Button { copyLog() } label: { Label("Copy", systemImage: "doc.on.doc") }
-                .buttonStyle(SoftButtonStyle())
+                .buttonStyle(ClaySoftButtonStyle(world: world))
                 .disabled(agent.log.isEmpty)
         }
         .padding(16)

@@ -12,13 +12,17 @@ struct RunnerEditView: View {
     @ObservedObject var agent: RunnerAgent
     @EnvironmentObject private var pool: RunnerPool
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
+
+    private var world: WorldStyle { WorldStyle(raw: worldRaw, dark: scheme == .dark) }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
-                IconTile(systemImage: "server.rack", gradient: LinearGradient(colors: [Brand.indigo, Brand.blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                ClayTile(systemImage: "server.rack", fill: world.warm)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Edit Runner").font(.title2.weight(.bold))
+                    Text("Edit Runner").font(.system(.title2, design: .rounded).weight(.bold))
                     Text(agent.instance.name.isEmpty ? "New runner" : agent.instance.name)
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -26,8 +30,8 @@ struct RunnerEditView: View {
             }
             .padding(18)
             .background {
-                LinearGradient(colors: [Brand.indigo.opacity(0.16), .clear], startPoint: .leading, endPoint: .trailing)
-                    .background(.regularMaterial)
+                LinearGradient(colors: [world.warm.opacity(0.16), .clear], startPoint: .leading, endPoint: .trailing)
+                    .background(world.card)
             }
 
             Form {
@@ -50,7 +54,7 @@ struct RunnerEditView: View {
                             TextField("", text: $agent.instance.workingDirectory)
                                 .textFieldStyle(.roundedBorder)
                             Button("Choose…") { chooseDir() }
-                                .buttonStyle(SoftButtonStyle())
+                                .buttonStyle(ClaySoftButtonStyle(world: world))
                         }
                     }
                     Text("Give each runner its own directory so their checkouts don't collide.")
@@ -58,7 +62,7 @@ struct RunnerEditView: View {
 
                     Toggle("Restart automatically if it crashes",
                            isOn: $agent.instance.restartOnCrash)
-                } header: { FormSectionHeader(title: "Runner", systemImage: "server.rack", tint: Brand.indigo) }
+                } header: { WorldSectionHeader(title: "Runner", symbol: "server.rack", world: world, tint: world.warm) }
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
@@ -66,14 +70,14 @@ struct RunnerEditView: View {
             HStack {
                 Spacer()
                 Button("Done") { pool.commitEdits(); dismiss() }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(ClayButtonStyle(world: world))
                     .keyboardShortcut(.defaultAction)
             }
             .padding(16)
             .background(.bar)
         }
         .frame(width: 520, height: 480)
-        .background(.regularMaterial)
+        .background(WorldBackdrop(world: world))
     }
 
     private func chooseDir() {
