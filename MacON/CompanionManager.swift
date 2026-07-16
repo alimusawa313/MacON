@@ -10,6 +10,7 @@
 
 import Foundation
 import Combine
+import CoreGraphics
 import MaconKit
 
 @MainActor
@@ -119,6 +120,34 @@ final class CompanionManager: ObservableObject {
                 }
             },
             apps: { AppCatalog.list() },
+            windows: { [weak self] in
+                // CompactOS picker — window metadata rides the screen-share toggle.
+                guard await MainActor.run(body: { self?.shareScreen ?? false }) else {
+                    return CompanionWindowsDTO(windows: [])
+                }
+                return await WindowManager.list()
+            },
+            compactOpen: { [weak self] req in
+                // Launching/resizing windows is remote control — same gate.
+                guard await MainActor.run(body: { self?.allowControl ?? false }) else { return nil }
+                guard let result = await WindowManager.openCompact(req) else { return nil }
+                await MainActor.run {
+                    // A device is now driving this window — wall off the Mac's
+                    // physical screen so nobody interferes (or watches).
+                    self?.compactSessionStarted()
+                    if result.resized {
+                        // We just refit the window being streamed — rebuild the
+                        // capture at its new size. The viewer keeps its
+                        // connection and simply gets a keyframe with the new
+                        // dimensions.
+                        self?.refreshStreamIfTargeting(result.response.windowId)
+                    }
+                }
+                return result.response
+            },
+            screenTarget: { [weak self] id in
+                Task { @MainActor in self?.setScreenTarget(id) }
+            },
             onLog: { _ in })
         svc.start()
         service = svc
@@ -131,6 +160,13 @@ final class CompanionManager: ObservableObject {
     func stop() {
         tunnel.stop()
         setScreenCapture(false)
+        // Server going away ends any compact session — drop the wall now if
+        // it's ours.
+        curtainLowerTask?.cancel(); curtainLowerTask = nil
+        if curtainAutoRaised {
+            curtainAutoRaised = false
+            if PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.lower() }
+        }
         service?.stop()
         service = nil
         isRunning = false
@@ -147,11 +183,63 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    /// CompactOS: the window the stream should capture (nil = whole display).
+    /// Set per /screen connection — a compact viewer names its window; a plain
+    /// viewer resets to the display.
+    private var streamWindowID: CGWindowID?
+    func setScreenTarget(_ id: CGWindowID?) {
+        // Curtain bookkeeping runs on every connect: a compact viewer (window
+        // target) keeps the wall up, a plain full-screen viewer releases it.
+        if id != nil { compactSessionStarted() } else { compactSessionMaybeEnded() }
+        guard id != streamWindowID else { return }
+        streamWindowID = id
+        streamer?.setWindowTarget(id)
+    }
+
+    // MARK: CompactOS privacy curtain
+
+    /// Whether WE raised the curtain for a CompactOS session (a curtain the
+    /// user raised manually is never auto-lowered).
+    private var curtainAutoRaised = false
+    private var curtainLowerTask: Task<Void, Never>?
+
+    /// A CompactOS session is live — raise the privacy wall over the Mac's
+    /// physical screen (the per-window stream never shows it, and its windows
+    /// ignore mouse events, so remote control keeps working).
+    private func compactSessionStarted() {
+        curtainLowerTask?.cancel(); curtainLowerTask = nil
+        if !PrivacyCurtain.shared.isUp {
+            PrivacyCurtain.shared.raise()
+            curtainAutoRaised = true
+        }
+    }
+
+    /// The compact viewer went away — but it may just be switching windows
+    /// (which reconnects), so wait a beat before dropping the wall.
+    private func compactSessionMaybeEnded() {
+        guard curtainAutoRaised else { return }
+        curtainLowerTask?.cancel()
+        curtainLowerTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self, self.curtainAutoRaised else { return }
+            self.curtainAutoRaised = false
+            if PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.lower() }
+        }
+    }
+
+    /// A compact/open just resized `id` — if that's the window on air, restart
+    /// capture so the encoder picks up the new size.
+    func refreshStreamIfTargeting(_ id: CGWindowID) {
+        guard id == streamWindowID else { return }
+        streamer?.refitWindow()
+    }
+
     /// Start/stop screen capture on demand — driven by whether anyone is viewing.
     func setScreenCapture(_ active: Bool) {
         if active && shareScreen {
             guard streamer == nil else { return }
             let s = ScreenStreamer(fps: streamFPS, maxWidth: streamMaxWidth,
+                                   windowID: streamWindowID,
                                    publish: { [broadcaster] packet in broadcaster.publish(packet) })
             s.setExcludedWindows(PrivacyCurtain.shared.excludedWindowNumbers)
             s.start()
@@ -161,6 +249,8 @@ final class CompanionManager: ObservableObject {
             statsTimer?.invalidate(); statsTimer = nil
             streamer?.stop()
             streamer = nil
+            // Last viewer left mid-compact-session (e.g. closed the app view).
+            if streamWindowID != nil { compactSessionMaybeEnded() }
         }
     }
 

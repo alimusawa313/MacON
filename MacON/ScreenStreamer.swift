@@ -33,6 +33,7 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private var maxWidth: Int                   // cap on the captured native-pixel width
     private var fps: Int                        // target frame rate (30 / 60 / 120)
     private var config: SCStreamConfiguration?  // kept so fps can be changed live
+    private var windowID: CGWindowID?           // CompactOS: capture one window, not the display
 
     // Adaptive bitrate: start mid-ladder, ramp toward max on a clean link,
     // back off fast when the server reports drops.
@@ -49,9 +50,11 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private var excludedIDs: [CGWindowID] = []  // windows kept OUT of the capture (e.g. privacy curtain)
     private var display: SCDisplay?             // remembered so the filter can be rebuilt live
 
-    init(fps: Int = 60, maxWidth: Int = 2560, publish: @escaping @Sendable (Data) -> Void) {
+    init(fps: Int = 60, maxWidth: Int = 2560, windowID: CGWindowID? = nil,
+         publish: @escaping @Sendable (Data) -> Void) {
         self.fps = fps
         self.maxWidth = maxWidth
+        self.windowID = windowID
         self.publish = publish
     }
 
@@ -126,6 +129,27 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     func setMaxWidth(_ newWidth: Int) {
         guard newWidth != maxWidth else { return }
         maxWidth = newWidth
+        restart()
+    }
+
+    /// Retarget the capture at a single window (CompactOS) or back to the whole
+    /// display (nil) — restarts capture, since the encoder's size changes.
+    func setWindowTarget(_ id: CGWindowID?) {
+        guard id != windowID else { return }
+        windowID = id
+        restart()
+    }
+
+    /// The targeted window was just resized (device rotated, keyboard opened…):
+    /// rebuild capture + encoder at its new size. The viewer's connection stays
+    /// up — it simply receives a keyframe with the new dimensions.
+    func refitWindow() {
+        guard windowID != nil else { return }
+        restart()
+    }
+
+    /// Tear down the stream + encoder and start over with current settings.
+    private func restart() {
         let old = stream
         stream = nil; config = nil
         Task { try? await old?.stopCapture() }
@@ -145,7 +169,9 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     /// Rebuild the content filter (e.g. after the excluded-window set changed).
+    /// Display capture only — a window capture can't show the curtain anyway.
     private func refreshFilter() async {
+        guard windowID == nil else { return }
         guard let stream, let display else { return }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
@@ -183,17 +209,34 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             let mode = CGDisplayCopyDisplayMode(display.displayID)
             let pxW = mode?.pixelWidth ?? display.width
             let pxH = mode?.pixelHeight ?? display.height
-            let scale = min(1.0, Double(maxWidth) / Double(pxW))
-            let w = Int((Double(pxW) * scale).rounded()), h = Int((Double(pxH) * scale).rounded())
+
+            let filter: SCContentFilter
+            var w: Int, h: Int
+            if let targetID = windowID,
+               let window = content.windows.first(where: { $0.windowID == targetID }) {
+                // CompactOS: capture just this window, at the display's Retina
+                // scale, so a phone-sized window streams sharp phone-sized text.
+                let retina = Double(pxW) / Double(display.width)
+                let scale = min(1.0, Double(maxWidth) / (window.frame.width * retina))
+                w = Int((window.frame.width * retina * scale).rounded())
+                h = Int((window.frame.height * retina * scale).rounded())
+                filter = SCContentFilter(desktopIndependentWindow: window)
+            } else {
+                let scale = min(1.0, Double(maxWidth) / Double(pxW))
+                w = Int((Double(pxW) * scale).rounded())
+                h = Int((Double(pxH) * scale).rounded())
+                let excludedIDs = currentExcludedIDs()
+                let excludedWindows = content.windows.filter { excludedIDs.contains($0.windowID) }
+                filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
+            }
+            w -= w % 2; h -= h % 2                       // encoders want even dimensions
 
             setupEncoder(width: Int32(w), height: Int32(h))
 
-            let excludedIDs = currentExcludedIDs()
-            let excludedWindows = content.windows.filter { excludedIDs.contains($0.windowID) }
-            let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
             let config = SCStreamConfiguration()
             config.width = w
             config.height = h
+            if windowID != nil { config.includeChildWindows = true }   // sheets, popovers
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
             config.queueDepth = 5
             config.showsCursor = true

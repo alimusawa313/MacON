@@ -40,6 +40,9 @@ final class RemoteControl {
             mouseButton(right: e.button == "right", down: e.down ?? true)
         case "click":
             let p = point(e) ?? lastPoint
+            // CompactOS: the click must land on the target window — if another
+            // window sits above it at that point, raise ours first.
+            if let wid = e.w { ensureOnTop(CGWindowID(wid), at: p) }
             click(at: p, right: e.button == "right", count: max(1, e.count ?? 1), mods: e.mods ?? [])
         case "scroll":
             scroll(dx: e.dx ?? 0, dy: e.dy ?? 0)
@@ -71,8 +74,47 @@ final class RemoteControl {
 
     private func point(_ e: ControlEvent) -> CGPoint? {
         guard let nx = e.x, let ny = e.y else { return nil }
+        // CompactOS: the device sees one window, so its normalized coordinates
+        // span that window's live bounds rather than the whole display.
+        if let wid = e.w, let b = windowBounds(CGWindowID(wid)) {
+            return CGPoint(x: b.minX + nx * b.width, y: b.minY + ny * b.height)
+        }
         let b = CGDisplayBounds(CGMainDisplayID())
         return CGPoint(x: b.minX + nx * b.width, y: b.minY + ny * b.height)
+    }
+
+    /// Is the target window the top one under `p`? Front-to-back scan of the
+    /// on-screen windows; if something else covers that point, raise the
+    /// target (and give the window server a beat) so the click lands on it.
+    private func ensureOnTop(_ id: CGWindowID, at p: CGPoint) {
+        if let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                 kCGNullWindowID) as? [[String: Any]] {
+            for info in list where (info[kCGWindowLayer as String] as? Int) == 0 {
+                guard (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,   // ignore invisible overlays
+                      let dict = info[kCGWindowBounds as String] as? NSDictionary,
+                      let bounds = CGRect(dictionaryRepresentation: dict as CFDictionary),
+                      bounds.contains(p) else { continue }
+                if (info[kCGWindowNumber as String] as? Int) == Int(id) { return }   // already on top
+                break
+            }
+        }
+        WindowManager.raise(id)
+        usleep(120_000)                    // activation + raise settle before the click posts
+    }
+
+    /// A window's current global bounds (top-left origin — the same space
+    /// CGEvent uses). Cached briefly so 60 Hz moves don't hammer the window
+    /// server, but fresh enough to track a window the user just dragged.
+    private var windowBoundsCache: (id: CGWindowID, bounds: CGRect, stamp: Date)?
+    private func windowBounds(_ id: CGWindowID) -> CGRect? {
+        if let c = windowBoundsCache, c.id == id, Date().timeIntervalSince(c.stamp) < 0.5 {
+            return c.bounds
+        }
+        guard let info = CGWindowListCopyWindowInfo(.optionIncludingWindow, id) as? [[String: Any]],
+              let dict = info.first?[kCGWindowBounds as String] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: dict as CFDictionary) else { return nil }
+        windowBoundsCache = (id, bounds, Date())
+        return bounds
     }
 
     // MARK: Injection
