@@ -384,6 +384,24 @@ struct SettingsView: View {
                         + "“Wake for network access” is enabled (Energy settings).")
             }
 
+            // Clamshell (lid-closed) access — a manual sudo step, since an app
+            // can't change this system power setting itself.
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Keep running with the lid closed")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(world.ink)
+                caption("A laptop normally sleeps when you shut the lid (unless it's on "
+                        + "power with an external display). Run this once in Terminal to "
+                        + "override that, so the companion stays reachable lid-closed:")
+                commandRow("sudo pmset -a disablesleep 1")
+                caption("To undo it — let closing the lid sleep the Mac again:")
+                commandRow("sudo pmset -a disablesleep 0")
+                caption("Terminal will ask for your admin password (apps can't change "
+                        + "this setting). Best paired with “Stay awake”, and keep the "
+                        + "Mac on power.")
+            }
+            .padding(.top, 4)
+
             Divider().padding(.vertical, 2)
 
             Toggle("Let paired devices wake the display", isOn: $companion.allowWake)
@@ -418,6 +436,26 @@ struct SettingsView: View {
                         + "preboot screen.")
             }
         } header: { WorldSectionHeader(title: "Power & Access", symbol: "power", world: world, tint: world.good) }
+    }
+
+    /// A monospaced shell command with a one-tap copy button.
+    private func commandRow(_ command: String) -> some View {
+        HStack(spacing: 8) {
+            Text(command)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(world.ink)
+                .textSelection(.enabled)
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(world.card, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(world.line))
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(command, forType: .string)
+            } label: { Image(systemName: "doc.on.doc") }
+                .buttonStyle(ClaySoftButtonStyle(world: world))
+                .help("Copy")
+        }
     }
 
     /// Accessibility status + a one-tap "grant" that registers the app and
