@@ -11,6 +11,7 @@
 import Foundation
 import Combine
 import CoreGraphics
+import AppKit
 import MaconKit
 
 @MainActor
@@ -40,6 +41,45 @@ final class CompanionManager: ObservableObject {
             syncTunnel()
         }
     }
+    /// Keep the Mac awake (never idle-sleep) while the companion is running, so
+    /// a paired device can always reach it.
+    @Published var keepAwake: Bool {
+        didSet {
+            defaults.set(keepAwake, forKey: awakeKey)
+            power.setKeepAwake(keepAwake && isRunning)
+        }
+    }
+    /// Let paired devices wake this Mac's display remotely.
+    @Published var allowWake: Bool {
+        didSet { defaults.set(allowWake, forKey: wakeKey) }
+    }
+    /// Let paired devices unlock this Mac by typing the stored login password.
+    @Published var allowUnlock: Bool {
+        didSet {
+            defaults.set(allowUnlock, forKey: unlockKey)
+            if allowUnlock { power.requestPermission() }
+        }
+    }
+    /// The login password used for remote unlock (Keychain-backed, never on disk).
+    var unlockPassword: String {
+        get { Keychain.get(account: Self.unlockAccount) }
+        set { Keychain.set(newValue, account: Self.unlockAccount) }
+    }
+    var hasUnlockPassword: Bool { !unlockPassword.isEmpty }
+
+    /// Whether the app is trusted for Accessibility — required to post the
+    /// keystrokes/clicks that control and unlock rely on.
+    var accessibilityTrusted: Bool { power.isTrusted }
+
+    /// Register the app for Accessibility (shows the system prompt, which adds
+    /// it to the list) and open the settings pane so it can be switched on.
+    func requestAccessibility() {
+        power.requestPermission()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// The tunnel process/state (UI observes through this manager).
     let tunnel = TunnelManager()
 
@@ -48,12 +88,17 @@ final class CompanionManager: ObservableObject {
     private let broadcaster = ScreenBroadcaster()
     private var streamer: ScreenStreamer?
     private let remote = RemoteControl()
+    private let power = PowerManager()
     private let defaults = UserDefaults.standard
     private let enabledKey = "companion.enabled"
     private let portKey = "companion.port"
     private let screenKey = "companion.shareScreen"
     private let controlKey = "companion.allowControl"
     private let remoteKey = "companion.remote"
+    private let awakeKey = "companion.keepAwake"
+    private let wakeKey = "companion.allowWake"
+    private let unlockKey = "companion.allowUnlock"
+    private static let unlockAccount = "companion.unlockPassword"
     private var tunnelSink: AnyCancellable?
 
     init() {
@@ -61,6 +106,9 @@ final class CompanionManager: ObservableObject {
         shareScreen = defaults.object(forKey: screenKey) as? Bool ?? true
         allowControl = defaults.bool(forKey: controlKey)   // default off (sensitive)
         remoteEnabled = defaults.bool(forKey: remoteKey)
+        keepAwake = defaults.object(forKey: awakeKey) as? Bool ?? true
+        allowWake = defaults.object(forKey: wakeKey) as? Bool ?? true
+        allowUnlock = defaults.bool(forKey: unlockKey)     // default off (sensitive)
         devices = store.deviceList()
 
         // Surface tunnel state changes through this manager's own publisher.
@@ -148,14 +196,47 @@ final class CompanionManager: ObservableObject {
             screenTarget: { [weak self] id in
                 Task { @MainActor in self?.setScreenTarget(id) }
             },
+            power: { [weak self] in
+                await MainActor.run { self?.powerInfo() ?? Self.powerUnavailable }
+            },
+            wake: { [weak self] in
+                await MainActor.run {
+                    guard let self, self.allowWake else { return }
+                    self.power.wake()
+                }
+            },
+            unlock: { [weak self] in
+                await MainActor.run {
+                    guard let self, self.allowUnlock else { return false }
+                    return self.power.unlock(password: self.unlockPassword)
+                }
+            },
             onLog: { _ in })
         svc.start()
         service = svc
         isRunning = true
+        power.setKeepAwake(keepAwake)
         refreshDevices()
         if store.deviceCount == 0 { newCode() }
         syncTunnel()
     }
+
+    /// Snapshot of this Mac's power/reachability state for `GET /power`.
+    private func powerInfo() -> CompanionPowerDTO {
+        let net = PowerManager.networkIdentity()
+        return CompanionPowerDTO(
+            locked: power.isLocked,
+            displayAsleep: power.isDisplayAsleep,
+            keepAwake: power.keepAwake,
+            canWake: allowWake,
+            canUnlock: allowUnlock && hasUnlockPassword,
+            mac: net.mac,
+            broadcast: net.broadcast)
+    }
+
+    private static let powerUnavailable = CompanionPowerDTO(
+        locked: false, displayAsleep: false, keepAwake: false,
+        canWake: false, canUnlock: false, mac: nil, broadcast: nil)
 
     func stop() {
         tunnel.stop()
@@ -167,6 +248,7 @@ final class CompanionManager: ObservableObject {
             curtainAutoRaised = false
             if PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.lower() }
         }
+        power.setKeepAwake(false)
         service?.stop()
         service = nil
         isRunning = false
