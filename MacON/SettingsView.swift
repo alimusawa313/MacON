@@ -23,6 +23,8 @@ struct SettingsView: View {
     @State private var newPasscode = ""
     @State private var unlockPassword = ""
     @State private var selection: SettingsCategory = .appearance
+    @State private var aiChecked = false
+    @State private var aiModelCount: Int?              // nil once checked → Ollama unreachable
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
 
@@ -70,7 +72,7 @@ struct SettingsView: View {
             case .appearance: appearanceSection
             case .accounts:   bitbucketSection; githubSection
             case .secrets:    secretsSection
-            case .companion:  companionSection
+            case .companion:  companionSection; aiSection
             case .power:      powerSection
             case .privacy:    privacyScreenSection
             case .portable:   portableSection
@@ -263,6 +265,41 @@ struct SettingsView: View {
                 accessibilityRow
             }
         } header: { WorldSectionHeader(title: "Companion app", symbol: "ipad.and.iphone", world: world) }
+    }
+
+    /// Local AI: let a paired device chat with this Mac's Ollama.
+    private var aiSection: some View {
+        Section {
+            caption("Chat with a large language model running locally on this Mac "
+                    + "(via Ollama) from a paired device. Prompts and any attached "
+                    + "files go to the model on this Mac and never leave it.")
+            Toggle("Let paired devices use local AI (Ollama)", isOn: $companion.allowAI)
+            if companion.allowAI {
+                if !aiChecked {
+                    Pill(text: "Checking for Ollama…", systemImage: "clock.fill", tint: world.warm)
+                } else if let n = aiModelCount {
+                    Pill(text: n == 0 ? "Ollama running — pull a model to start"
+                                      : "Ollama running — \(n) model\(n == 1 ? "" : "s")",
+                         systemImage: "cpu.fill",
+                         tint: n == 0 ? world.warm : world.good)
+                } else {
+                    Pill(text: "Ollama not detected — install it from ollama.com",
+                         systemImage: "exclamationmark.triangle.fill", tint: world.warm)
+                }
+                caption("Install Ollama and pull a model (e.g. `ollama pull llama3.2`). "
+                        + "Vision models such as llava also accept image attachments "
+                        + "from the device.")
+            }
+        } header: {
+            WorldSectionHeader(title: "Local AI", symbol: "brain.head.profile",
+                               world: world, tint: world.primary)
+        }
+        .task(id: companion.allowAI) {
+            guard companion.allowAI else { aiChecked = false; return }
+            aiChecked = false
+            aiModelCount = await companion.probeOllama()
+            aiChecked = true
+        }
     }
 
     /// Tunnel state row(s) under the remote-access toggle.

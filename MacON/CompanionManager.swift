@@ -80,6 +80,10 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    /// Probe the local Ollama for the settings status line (model count, or nil
+    /// if it isn't running).
+    func probeOllama() async -> Int? { await ollama.probe() }
+
     /// Publish reachability + status to iCloud so a paired device re-points
     /// itself automatically (e.g. when the tunnel URL rotates), and can wake/
     /// unlock over iCloud. Off by default; dormant unless iCloud is provisioned.
@@ -93,6 +97,12 @@ final class CompanionManager: ObservableObject {
     var iCloudAvailable: Bool { cloud.available }
     var iCloudActive: Bool { cloud.active }
     var lastCloudPublish: Date? { cloud.lastPublish }
+
+    /// Let paired devices chat with this Mac's local Ollama. Off by default:
+    /// it exposes local models (and any files sent to them) to paired devices.
+    @Published var allowAI: Bool {
+        didSet { defaults.set(allowAI, forKey: aiKey) }
+    }
 
     /// The tunnel process/state (UI observes through this manager).
     let tunnel = TunnelManager()
@@ -116,7 +126,9 @@ final class CompanionManager: ObservableObject {
     private let wakeKey = "companion.allowWake"
     private let unlockKey = "companion.allowUnlock"
     private let iCloudKey = "companion.iCloud"
+    private let aiKey = "companion.allowAI"
     private static let unlockAccount = "companion.unlockPassword"
+    private let ollama = OllamaService()
     private var tunnelSink: AnyCancellable?
 
     init() {
@@ -128,6 +140,7 @@ final class CompanionManager: ObservableObject {
         allowWake = defaults.object(forKey: wakeKey) as? Bool ?? true
         allowUnlock = defaults.bool(forKey: unlockKey)     // default off (sensitive)
         iCloudEnabled = defaults.bool(forKey: iCloudKey)   // default off
+        allowAI = defaults.bool(forKey: aiKey)             // default off
         devices = store.deviceList()
 
         // Surface CloudLink's published state through this manager.
@@ -253,6 +266,17 @@ final class CompanionManager: ObservableObject {
                     guard let self, self.allowUnlock else { return }
                     if !PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.raise() }
                 }
+            },
+            aiModels: { [weak self] in
+                guard let self, await MainActor.run(body: { self.allowAI }) else { return nil }
+                return await self.ollama.modelsData()
+            },
+            aiChat: { [weak self] body, emit in
+                guard let self, await MainActor.run(body: { self.allowAI }) else {
+                    var line = Data(#"{"error":"AI is turned off on the Mac."}"#.utf8)
+                    line.append(0x0A); emit(line); return
+                }
+                await self.ollama.chat(body: body, emit: emit)
             },
             onLog: { _ in })
         svc.start()
