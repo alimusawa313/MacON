@@ -201,6 +201,29 @@ final class RemoteControl {
         }
     }
 
+    /// Type a string as discrete key-down/up keycodes posted to the session
+    /// event tap — for the lock screen, which ignores the Unicode-only events
+    /// `type(_:)` relies on. Unmappable characters are skipped.
+    func typeSecure(_ s: String) {
+        let src = CGEventSource(stateID: .hidSystemState)
+        for ch in s {
+            guard let mapped = Self.keyCode(for: ch) else { continue }
+            for down in [true, false] {
+                let ev = CGEvent(keyboardEventSource: src, virtualKey: mapped.code, keyDown: down)
+                ev?.flags = mapped.shift ? .maskShift : []
+                ev?.post(tap: .cgSessionEventTap)
+            }
+        }
+    }
+
+    /// Press Return at the session tap (submits the unlock field).
+    func pressReturn() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        for down in [true, false] {
+            CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: down)?.post(tap: .cgSessionEventTap)
+        }
+    }
+
     /// US-QWERTY virtual keycode (and whether Shift is needed) for a character.
     /// Nil for characters we can't map — those fall back to a Unicode-only event.
     private static func keyCode(for ch: Character) -> (code: CGKeyCode, shift: Bool)? {

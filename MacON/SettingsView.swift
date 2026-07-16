@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var exportWithSecrets = false
     @State private var showPairing = false
     @State private var newPasscode = ""
+    @State private var unlockPassword = ""
     @State private var selection: SettingsCategory = .appearance
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
@@ -70,6 +71,7 @@ struct SettingsView: View {
             case .accounts:   bitbucketSection; githubSection
             case .secrets:    secretsSection
             case .companion:  companionSection
+            case .power:      powerSection
             case .privacy:    privacyScreenSection
             case .portable:   portableSection
             case .cleanup:    cleanupSection
@@ -258,8 +260,7 @@ struct SettingsView: View {
             Toggle("Let paired devices view this screen", isOn: $companion.shareScreen)
             Toggle("Let paired devices control this Mac (cursor & keyboard)", isOn: $companion.allowControl)
             if companion.allowControl {
-                Pill(text: "Grant Accessibility in System Settings → Privacy & Security",
-                     systemImage: "exclamationmark.triangle.fill", tint: world.warm)
+                accessibilityRow
             }
         } header: { WorldSectionHeader(title: "Companion app", symbol: "ipad.and.iphone", world: world) }
     }
@@ -306,6 +307,76 @@ struct SettingsView: View {
                 Button("Retry") { companion.remoteEnabled = false; companion.remoteEnabled = true }
                     .buttonStyle(ClaySoftButtonStyle(world: world))
                 Spacer()
+            }
+        }
+    }
+
+    private var powerSection: some View {
+        Section {
+            caption("Keep this Mac reachable from a paired device — stay awake so "
+                    + "it never idle-sleeps, and let the device wake the display or "
+                    + "unlock the screen.")
+
+            Toggle("Stay awake while the companion is running", isOn: $companion.keepAwake)
+            if companion.keepAwake {
+                Pill(text: companion.isRunning ? "Awake — reachable" : "Applies when the server is on",
+                     systemImage: "bolt.fill",
+                     tint: companion.isRunning ? world.good : world.warm)
+            } else {
+                caption("The Mac may idle-sleep and drop off the network. From full "
+                        + "sleep, the device's Wake-on-LAN packet only works if macOS "
+                        + "“Wake for network access” is enabled (Energy settings).")
+            }
+
+            Divider().padding(.vertical, 2)
+
+            Toggle("Let paired devices wake the display", isOn: $companion.allowWake)
+
+            Toggle("Let paired devices unlock this Mac", isOn: $companion.allowUnlock)
+            if companion.allowUnlock {
+                SecureField(companion.hasUnlockPassword ? "Password saved — replace it" : "Login password",
+                            text: $unlockPassword)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { companion.unlockPassword = unlockPassword; unlockPassword = "" }
+                HStack {
+                    Button("Save password") {
+                        companion.unlockPassword = unlockPassword; unlockPassword = ""
+                    }
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
+                    .disabled(unlockPassword.isEmpty)
+                    if companion.hasUnlockPassword {
+                        Button(role: .destructive) { companion.unlockPassword = "" } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                        .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
+                    }
+                    Spacer()
+                    Pill(text: companion.hasUnlockPassword ? "Stored in Keychain" : "No password set",
+                         systemImage: companion.hasUnlockPassword ? "key.fill" : "exclamationmark.triangle.fill",
+                         tint: companion.hasUnlockPassword ? world.good : world.warm)
+                }
+                accessibilityRow
+                caption("Stored only in the macOS Keychain. Needs Accessibility. "
+                        + "macOS blocks synthetic typing under Secure Keyboard Entry, "
+                        + "so unlock is best-effort — it won't defeat a FileVault "
+                        + "preboot screen.")
+            }
+        } header: { WorldSectionHeader(title: "Power & Access", symbol: "power", world: world, tint: world.good) }
+    }
+
+    /// Accessibility status + a one-tap "grant" that registers the app and
+    /// opens the right System Settings pane. Needed for control and unlock.
+    @ViewBuilder private var accessibilityRow: some View {
+        if companion.accessibilityTrusted {
+            Pill(text: "Accessibility granted", systemImage: "checkmark.seal.fill", tint: world.good)
+        } else {
+            HStack {
+                Pill(text: "Accessibility needed", systemImage: "exclamationmark.triangle.fill", tint: world.warm)
+                Spacer()
+                Button { companion.requestAccessibility() } label: {
+                    Label("Grant Accessibility…", systemImage: "hand.raised.fill")
+                }
+                .buttonStyle(ClaySoftButtonStyle(world: world))
             }
         }
     }
@@ -541,7 +612,7 @@ struct SettingsSnapshot {
 /// The settings panes, in sidebar order — one focused screen each, the way
 /// System Settings splits things up.
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case appearance, accounts, secrets, companion, privacy, portable, cleanup
+    case appearance, accounts, secrets, companion, power, privacy, portable, cleanup
     var id: String { rawValue }
 
     var title: String {
@@ -550,6 +621,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .accounts:   return "Accounts"
         case .secrets:    return "Global Secrets"
         case .companion:  return "Companion"
+        case .power:      return "Power & Access"
         case .privacy:    return "Privacy Screen"
         case .portable:   return "Portable Config"
         case .cleanup:    return "Cleanup"
@@ -562,6 +634,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .accounts:   return "person.crop.circle.fill"
         case .secrets:    return "key.fill"
         case .companion:  return "ipad.and.iphone"
+        case .power:      return "power"
         case .privacy:    return "hand.raised.fill"
         case .portable:   return "terminal.fill"
         case .cleanup:    return "sparkles"
@@ -574,6 +647,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .accounts:   return world.warm
         case .secrets:    return world.warm
         case .companion:  return world.primary
+        case .power:      return world.good
         case .privacy:    return world.bad
         case .portable:   return world.good
         case .cleanup:    return world.good
