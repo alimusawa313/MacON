@@ -170,6 +170,40 @@ enum CodeAccess {
         return CompanionListDTO(values: listing.project?.schemes ?? listing.workspace?.schemes ?? [])
     }
 
+    /// Destination strings for xcodebuild: the Mac itself plus every
+    /// available simulator, via `xcrun simctl list` (names de-duped across
+    /// runtimes, iPhones first).
+    static func xcodeDestinations() async -> CompanionListDTO {
+        var names: [String] = []
+        if let output = await runTool("/usr/bin/xcrun",
+                                      ["simctl", "list", "devices", "available", "-j"],
+                                      timeout: 15),
+           let data = output.data(using: .utf8) {
+            struct SimList: Decodable {
+                struct Device: Decodable { let name: String }
+                let devices: [String: [Device]]
+            }
+            if let list = try? JSONDecoder().decode(SimList.self, from: data) {
+                var seen = Set<String>()
+                for (runtime, devices) in list.devices
+                where runtime.contains("iOS") || runtime.contains("iPadOS") {
+                    for device in devices where seen.insert(device.name).inserted {
+                        names.append(device.name)
+                    }
+                }
+            }
+        }
+        names.sort {
+            // iPhones before iPads, then alphabetical.
+            let a = $0.hasPrefix("iPhone"), b = $1.hasPrefix("iPhone")
+            if a != b { return a }
+            return $0.localizedStandardCompare($1) == .orderedAscending
+        }
+        var values = ["platform=macOS"]
+        values += names.prefix(40).map { "platform=iOS Simulator,name=\($0)" }
+        return CompanionListDTO(values: values)
+    }
+
     /// Run a CLI tool and capture stdout (nil on failure/timeout).
     private static func runTool(_ path: String, _ args: [String],
                                 timeout: TimeInterval) async -> String? {

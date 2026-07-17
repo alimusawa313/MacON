@@ -311,6 +311,10 @@ final class CompanionManager: ObservableObject {
                 xcodeSchemes: { [weak self] path in
                     guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
                     return await CodeAccess.xcodeSchemes(path)
+                },
+                xcodeDestinations: { [weak self] in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
+                    return await CodeAccess.xcodeDestinations()
                 }),
             termOps: CompanionServer.TermOps(
                 start: { [weak self] id, cwd, emit in
