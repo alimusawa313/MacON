@@ -264,6 +264,13 @@ struct SettingsView: View {
             if companion.allowControl {
                 accessibilityRow
             }
+            Toggle("Let paired devices browse & edit files (Code)", isOn: $companion.allowCode)
+            if companion.allowCode {
+                caption("Powers the companion's native Code editor: it reads and "
+                        + "writes text files in your home folder over the paired "
+                        + "connection — no screen stream. VS Code picks the edits up "
+                        + "instantly.")
+            }
         } header: { WorldSectionHeader(title: "Companion app", symbol: "ipad.and.iphone", world: world) }
     }
 

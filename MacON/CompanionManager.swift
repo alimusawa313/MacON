@@ -104,6 +104,12 @@ final class CompanionManager: ObservableObject {
         didSet { defaults.set(allowAI, forKey: aiKey) }
     }
 
+    /// Let paired devices browse and edit files in the home folder (the
+    /// companion's native Code editor). Off by default — it's file access.
+    @Published var allowCode: Bool {
+        didSet { defaults.set(allowCode, forKey: codeKey) }
+    }
+
     /// The tunnel process/state (UI observes through this manager).
     let tunnel = TunnelManager()
 
@@ -127,6 +133,7 @@ final class CompanionManager: ObservableObject {
     private let unlockKey = "companion.allowUnlock"
     private let iCloudKey = "companion.iCloud"
     private let aiKey = "companion.allowAI"
+    private let codeKey = "companion.allowCode"
     private static let unlockAccount = "companion.unlockPassword"
     private let ollama = OllamaService()
     private var tunnelSink: AnyCancellable?
@@ -141,6 +148,7 @@ final class CompanionManager: ObservableObject {
         allowUnlock = defaults.bool(forKey: unlockKey)     // default off (sensitive)
         iCloudEnabled = defaults.bool(forKey: iCloudKey)   // default off
         allowAI = defaults.bool(forKey: aiKey)             // default off
+        allowCode = defaults.bool(forKey: codeKey)         // default off (file access)
         devices = store.deviceList()
 
         // Surface CloudLink's published state through this manager.
@@ -278,6 +286,23 @@ final class CompanionManager: ObservableObject {
                 }
                 await self.ollama.chat(body: body, emit: emit)
             },
+            codeOps: CompanionServer.CodeOps(
+                list: { [weak self] path in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
+                    return CodeAccess.list(path)
+                },
+                read: { [weak self] path in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
+                    return CodeAccess.read(path)
+                },
+                write: { [weak self] path, content in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return false }
+                    return CodeAccess.write(path, content: content)
+                },
+                open: { [weak self] path in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return false }
+                    return await MainActor.run { CodeAccess.openInEditor(path) }
+                }),
             onLog: { _ in })
         svc.start()
         service = svc
