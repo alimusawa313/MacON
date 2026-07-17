@@ -102,8 +102,11 @@ enum CodeAccess {
             if path.contains(".xcodeproj/") { return false }   // project.xcworkspace inside a project
             return true
         }
+        // Spotlight can be off or unindexed — fall back to a shallow walk.
+        let found = kept.isEmpty ? scanForProjects(home: home) : Array(kept.prefix(50))
+
         var entries: [CompanionCodeEntryDTO] = []
-        for path in kept.prefix(50) {
+        for path in found.prefix(50) {
             let name = (path as NSString).lastPathComponent
             let tilde = "~" + String(path.dropFirst(home.count))
             let isWorkspace = (path as NSString).pathExtension == "xcworkspace"
@@ -116,6 +119,37 @@ enum CodeAccess {
             return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
         return CompanionCodeListDTO(path: "~", entries: entries)
+    }
+
+    /// Breadth-first search for project bundles when Spotlight has nothing:
+    /// depth- and breadth-capped, skipping hidden and known-heavy folders.
+    private static func scanForProjects(home: String) -> [String] {
+        let skip: Set<String> = ["Library", "Music", "Movies", "Pictures", "Applications",
+                                 "node_modules", "Pods", "DerivedData", "Carthage",
+                                 ".build", "build", ".git", ".Trash"]
+        var queue: [(path: String, depth: Int)] = [(home, 0)]
+        var results: [String] = []
+        var visited = 0
+        let fm = FileManager.default
+
+        while !queue.isEmpty, results.count < 50, visited < 1500 {
+            let (dir, depth) = queue.removeFirst()
+            visited += 1
+            guard let names = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            for name in names where !name.hasPrefix(".") {
+                let full = dir + "/" + name
+                let ext = (name as NSString).pathExtension
+                if ext == "xcodeproj" || ext == "xcworkspace" {
+                    if !full.contains(".xcodeproj/") { results.append(full) }
+                    continue
+                }
+                if depth < 4, !skip.contains(name),
+                   (try? fm.attributesOfItem(atPath: full)[.type] as? FileAttributeType) == .typeDirectory {
+                    queue.append((full, depth + 1))
+                }
+            }
+        }
+        return results
     }
 
     /// The schemes of a project/workspace, via `xcodebuild -list -json`.
