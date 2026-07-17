@@ -31,6 +31,7 @@ final class TunnelManager: ObservableObject {
 
     private var process: Process?
     private var stopRequested = false
+    private var desiredPort: Int?
 
     var publicURL: String? {
         if case .running(let url) = status { return url }
@@ -56,9 +57,14 @@ final class TunnelManager: ObservableObject {
     // MARK: Lifecycle
 
     func start(port: Int) {
-        guard process == nil else { return }
-        guard let bin = Self.binaryPath() else { status = .notInstalled; return }
+        desiredPort = port
         stopRequested = false
+        guard process == nil else { return }
+        launch(port: port)
+    }
+
+    private func launch(port: Int) {
+        guard let bin = Self.binaryPath() else { status = .notInstalled; return }
         status = .starting
 
         let p = Process()
@@ -76,7 +82,7 @@ final class TunnelManager: ObservableObject {
                                       options: .regularExpression) {
                 let url = String(text[range])
                 Task { @MainActor [weak self] in
-                    guard let self, self.process != nil else { return }
+                    guard let self, self.process === p else { return }
                     if case .running = self.status {} else { self.status = .running(url) }
                 }
             }
@@ -84,13 +90,15 @@ final class TunnelManager: ObservableObject {
 
         p.terminationHandler = { [weak self] proc in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.process === p else { return }   // ignore a superseded process
                 pipe.fileHandleForReading.readabilityHandler = nil
                 self.process = nil
                 if self.stopRequested {
                     self.status = .off
                 } else {
-                    self.status = .failed("Tunnel exited (code \(proc.terminationStatus)). Try again.")
+                    // Unexpected exit (usually the Mac slept). Note it, but let
+                    // the wake handler bring a fresh tunnel back on its own.
+                    self.status = .failed("Tunnel dropped — reconnecting on wake.")
                 }
             }
         }
@@ -103,8 +111,21 @@ final class TunnelManager: ObservableObject {
         }
     }
 
+    /// Force a fresh tunnel (a new public URL). Used after the Mac wakes: the
+    /// old cloudflared may be dead or its edge connection stale, so we tear it
+    /// down and relaunch. The old process's termination is ignored via the
+    /// `process === p` guard, so it can't clobber the new run's status.
+    func refreshNow() {
+        guard let port = desiredPort, !stopRequested else { return }
+        let old = process
+        process = nil
+        old?.terminate()
+        launch(port: port)
+    }
+
     func stop() {
         stopRequested = true
+        desiredPort = nil
         process?.terminate()
         process = nil
         status = .off

@@ -185,6 +185,30 @@ final class CompanionManager: ObservableObject {
         // refresh which windows the capture excludes so the companion always
         // sees the real screen, never the wall.
         PrivacyCurtain.shared.onChange = { [weak self] in self?.applyCurtainExclusion() }
+
+        // Sleep drops the Cloudflare tunnel (and its edge connections); on wake
+        // the old URL is usually dead. Relaunch a fresh tunnel and republish
+        // the beacon so a paired device re-points itself over iCloud — no
+        // manual "Change Address" dance.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recoverAfterWake() }
+        }
+    }
+
+    /// Bring the tunnel back after the Mac wakes and re-announce over iCloud.
+    private func recoverAfterWake() {
+        guard isRunning else { return }
+        if remoteEnabled { tunnel.refreshNow() }
+        if iCloudEnabled { cloud.start() }
+        // Publish now, and again shortly once the fresh tunnel URL has landed
+        // (the tunnelSink also republishes the moment the URL changes).
+        publishBeacon()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            self.publishBeacon()
+        }
     }
 
     /// Should the server come up automatically at launch?
