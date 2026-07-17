@@ -82,6 +82,92 @@ enum CodeAccess {
         return (try? content.write(to: url, atomically: true, encoding: .utf8)) != nil
     }
 
+    // MARK: Xcode
+
+    /// Xcode projects/workspaces under home, via Spotlight (fast, no walk).
+    /// Workspaces first, then projects; DerivedData and package checkouts
+    /// filtered out.
+    static func xcodeProjects() async -> CompanionCodeListDTO {
+        let query = "kMDItemFSName == '*.xcodeproj' || kMDItemFSName == '*.xcworkspace'"
+        let output = await runTool("/usr/bin/mdfind", [query], timeout: 10) ?? ""
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+        let paths: [String] = output.split(separator: "\n").map(String.init)
+        let kept: [String] = paths.filter { path in
+            guard path.hasPrefix(home + "/") else { return false }
+            if path.contains("/DerivedData/") { return false }
+            if path.contains("/checkouts/") { return false }
+            if path.contains("/.build/") { return false }
+            if path.contains("/Carthage/") { return false }
+            if path.contains(".xcodeproj/") { return false }   // project.xcworkspace inside a project
+            return true
+        }
+        var entries: [CompanionCodeEntryDTO] = []
+        for path in kept.prefix(50) {
+            let name = (path as NSString).lastPathComponent
+            let tilde = "~" + String(path.dropFirst(home.count))
+            let isWorkspace = (path as NSString).pathExtension == "xcworkspace"
+            entries.append(CompanionCodeEntryDTO(name: name, path: tilde,
+                                                 dir: isWorkspace,   // dir ⇒ workspace
+                                                 size: 0))
+        }
+        entries.sort {
+            if $0.dir != $1.dir { return $0.dir }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        return CompanionCodeListDTO(path: "~", entries: entries)
+    }
+
+    /// The schemes of a project/workspace, via `xcodebuild -list -json`.
+    static func xcodeSchemes(_ raw: String) async -> CompanionListDTO? {
+        guard let url = sanitize(raw) else { return nil }
+        let flag = url.pathExtension == "xcworkspace" ? "-workspace" : "-project"
+        guard let output = await runTool("/usr/bin/xcodebuild",
+                                         ["-list", "-json", flag, url.path],
+                                         timeout: 30),
+              let data = output.data(using: .utf8) else { return nil }
+
+        struct Listing: Decodable {
+            struct Box: Decodable { let schemes: [String]? }
+            let project: Box?
+            let workspace: Box?
+        }
+        guard let listing = try? JSONDecoder().decode(Listing.self, from: data) else { return nil }
+        return CompanionListDTO(values: listing.project?.schemes ?? listing.workspace?.schemes ?? [])
+    }
+
+    /// Run a CLI tool and capture stdout (nil on failure/timeout).
+    private static func runTool(_ path: String, _ args: [String],
+                                timeout: TimeInterval) async -> String? {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = args
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+
+            let done = NSLock()
+            var finished = false
+            func finish(_ value: String?) {
+                done.lock(); defer { done.unlock() }
+                guard !finished else { return }
+                finished = true
+                continuation.resume(returning: value)
+            }
+
+            process.terminationHandler = { _ in
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                finish(String(data: data, encoding: .utf8))
+            }
+            do { try process.run() } catch { finish(nil); return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                if process.isRunning { process.terminate() }
+                finish(nil)
+            }
+        }
+    }
+
     /// Open the path in VS Code on this Mac (falls back to the default app).
     static func openInEditor(_ raw: String) -> Bool {
         guard let url = sanitize(raw) else { return false }
