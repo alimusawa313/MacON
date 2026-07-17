@@ -136,6 +136,7 @@ final class CompanionManager: ObservableObject {
     private let codeKey = "companion.allowCode"
     private static let unlockAccount = "companion.unlockPassword"
     private let ollama = OllamaService()
+    private let terminal = TerminalBridge()
     private var tunnelSink: AnyCancellable?
 
     init() {
@@ -303,6 +304,14 @@ final class CompanionManager: ObservableObject {
                     guard await MainActor.run(body: { self?.allowCode ?? false }) else { return false }
                     return await MainActor.run { CodeAccess.openInEditor(path) }
                 }),
+            termOps: CompanionServer.TermOps(
+                start: { [weak self] id, cwd, emit in
+                    guard let self, await MainActor.run(body: { self.allowCode }) else { return false }
+                    return self.terminal.start(id: id, cwd: cwd, emit: emit)
+                },
+                input: { [weak self] id, bytes in self?.terminal.input(id: id, bytes) },
+                resize: { [weak self] id, cols, rows in self?.terminal.resize(id: id, cols: cols, rows: rows) },
+                close: { [weak self] id in self?.terminal.close(id: id) }),
             onLog: { _ in })
         svc.start()
         service = svc
