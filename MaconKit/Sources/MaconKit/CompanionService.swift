@@ -31,6 +31,8 @@ public final class CompanionService {
                 privacy: (@Sendable () async -> Void)? = nil,
                 aiModels: (@Sendable () async -> Data?)? = nil,
                 aiChat: (@Sendable (_ body: Data, _ emit: @escaping @Sendable (Data) -> Void) async -> Void)? = nil,
+                codeOps: CompanionServer.CodeOps? = nil,
+                termOps: CompanionServer.TermOps? = nil,
                 onLog: @escaping @Sendable (String) -> Void) {
         self.store = store
         let data = CompanionData(runners: runners, runnerName: runnerName, pool: pool)
@@ -76,6 +78,8 @@ public final class CompanionService {
             privacy: privacy,
             aiModels: aiModels,
             aiChat: aiChat,
+            codeOps: codeOps,
+            termOps: termOps,
             onLog: onLog)
     }
 

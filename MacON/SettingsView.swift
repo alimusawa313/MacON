@@ -264,6 +264,14 @@ struct SettingsView: View {
             if companion.allowControl {
                 accessibilityRow
             }
+            Toggle("Let paired devices use Code (files & terminal)", isOn: $companion.allowCode)
+            if companion.allowCode {
+                caption("Powers the companion's native Code workspace: it browses and "
+                        + "edits text files in your home folder over the paired "
+                        + "connection — no screen stream — and opens a real shell "
+                        + "(zsh) on this Mac in its terminal. VS Code picks edits up "
+                        + "instantly.")
+            }
         } header: { WorldSectionHeader(title: "Companion app", symbol: "ipad.and.iphone", world: world) }
     }
 

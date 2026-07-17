@@ -104,6 +104,12 @@ final class CompanionManager: ObservableObject {
         didSet { defaults.set(allowAI, forKey: aiKey) }
     }
 
+    /// Let paired devices browse and edit files in the home folder (the
+    /// companion's native Code editor). Off by default — it's file access.
+    @Published var allowCode: Bool {
+        didSet { defaults.set(allowCode, forKey: codeKey) }
+    }
+
     /// The tunnel process/state (UI observes through this manager).
     let tunnel = TunnelManager()
 
@@ -127,8 +133,10 @@ final class CompanionManager: ObservableObject {
     private let unlockKey = "companion.allowUnlock"
     private let iCloudKey = "companion.iCloud"
     private let aiKey = "companion.allowAI"
+    private let codeKey = "companion.allowCode"
     private static let unlockAccount = "companion.unlockPassword"
     private let ollama = OllamaService()
+    private let terminal = TerminalBridge()
     private var tunnelSink: AnyCancellable?
 
     init() {
@@ -141,6 +149,7 @@ final class CompanionManager: ObservableObject {
         allowUnlock = defaults.bool(forKey: unlockKey)     // default off (sensitive)
         iCloudEnabled = defaults.bool(forKey: iCloudKey)   // default off
         allowAI = defaults.bool(forKey: aiKey)             // default off
+        allowCode = defaults.bool(forKey: codeKey)         // default off (file access)
         devices = store.deviceList()
 
         // Surface CloudLink's published state through this manager.
@@ -278,6 +287,43 @@ final class CompanionManager: ObservableObject {
                 }
                 await self.ollama.chat(body: body, emit: emit)
             },
+            codeOps: CompanionServer.CodeOps(
+                list: { [weak self] path in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
+                    return CodeAccess.list(path)
+                },
+                read: { [weak self] path in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
+                    return CodeAccess.read(path)
+                },
+                write: { [weak self] path, content in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return false }
+                    return CodeAccess.write(path, content: content)
+                },
+                open: { [weak self] path in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return false }
+                    return await MainActor.run { CodeAccess.openInEditor(path) }
+                },
+                xcodeProjects: { [weak self] in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
+                    return await CodeAccess.xcodeProjects()
+                },
+                xcodeSchemes: { [weak self] path in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
+                    return await CodeAccess.xcodeSchemes(path)
+                },
+                xcodeDestinations: { [weak self] in
+                    guard await MainActor.run(body: { self?.allowCode ?? false }) else { return nil }
+                    return await CodeAccess.xcodeDestinations()
+                }),
+            termOps: CompanionServer.TermOps(
+                start: { [weak self] id, cwd, emit in
+                    guard let self, await MainActor.run(body: { self.allowCode }) else { return false }
+                    return self.terminal.start(id: id, cwd: cwd, emit: emit)
+                },
+                input: { [weak self] id, bytes in self?.terminal.input(id: id, bytes) },
+                resize: { [weak self] id, cols, rows in self?.terminal.resize(id: id, cols: cols, rows: rows) },
+                close: { [weak self] id in self?.terminal.close(id: id) }),
             onLog: { _ in })
         svc.start()
         service = svc

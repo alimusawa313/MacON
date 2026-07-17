@@ -67,6 +67,62 @@ public final class CompanionServer: @unchecked Sendable {
         }
     }
 
+    /// Native file access for the companion's Code editor (nil = the /code
+    /// routes 404). Every op is gated by the app's "allow code" toggle.
+    public struct CodeOps: Sendable {
+        public var list: @Sendable (String) async -> CompanionCodeListDTO?
+        public var read: @Sendable (String) async -> CompanionCodeFileDTO?
+        /// Returns false when the write was refused (bad path, not text).
+        public var write: @Sendable (String, String) async -> Bool
+        /// Open the path in the Mac's editor (VS Code); false when refused.
+        public var open: @Sendable (String) async -> Bool
+        /// Xcode projects/workspaces on the Mac (nil = refused/off).
+        public var xcodeProjects: (@Sendable () async -> CompanionCodeListDTO?)?
+        /// A project's schemes, via xcodebuild (nil = refused/failed).
+        public var xcodeSchemes: (@Sendable (String) async -> CompanionListDTO?)?
+        /// xcodebuild destination strings (the Mac + available simulators).
+        public var xcodeDestinations: (@Sendable () async -> CompanionListDTO?)?
+
+        public init(list: @escaping @Sendable (String) async -> CompanionCodeListDTO?,
+                    read: @escaping @Sendable (String) async -> CompanionCodeFileDTO?,
+                    write: @escaping @Sendable (String, String) async -> Bool,
+                    open: @escaping @Sendable (String) async -> Bool,
+                    xcodeProjects: (@Sendable () async -> CompanionCodeListDTO?)? = nil,
+                    xcodeSchemes: (@Sendable (String) async -> CompanionListDTO?)? = nil,
+                    xcodeDestinations: (@Sendable () async -> CompanionListDTO?)? = nil) {
+            self.list = list; self.read = read; self.write = write; self.open = open
+            self.xcodeProjects = xcodeProjects; self.xcodeSchemes = xcodeSchemes
+            self.xcodeDestinations = xcodeDestinations
+        }
+    }
+
+    /// A live shell on the Mac for the companion's Code terminal (nil = the
+    /// /term route 404s). One PTY session per WebSocket; raw output bytes
+    /// stream out as binary frames, input/resizes arrive as JSON text frames.
+    public struct TermOps: Sendable {
+        /// Start a session: id, working directory, and the sink for output
+        /// bytes. False = refused (feature off).
+        public var start: @Sendable (String, String?, @escaping @Sendable (Data) -> Void) async -> Bool
+        public var input: @Sendable (String, Data) async -> Void
+        public var resize: @Sendable (String, Int, Int) async -> Void
+        public var close: @Sendable (String) async -> Void
+
+        public init(start: @escaping @Sendable (String, String?, @escaping @Sendable (Data) -> Void) async -> Bool,
+                    input: @escaping @Sendable (String, Data) async -> Void,
+                    resize: @escaping @Sendable (String, Int, Int) async -> Void,
+                    close: @escaping @Sendable (String) async -> Void) {
+            self.start = start; self.input = input; self.resize = resize; self.close = close
+        }
+    }
+
+    /// One inbound terminal frame: keystrokes (base64) or a resize.
+    private struct TermInbound: Decodable {
+        let t: String            // "in" | "size"
+        let d: String?           // base64 input bytes
+        let c: Int?              // cols
+        let r: Int?              // rows
+    }
+
     private let port: NWEndpoint.Port
     private let queue = DispatchQueue(label: "macon.companion")
     private var listener: NWListener?
@@ -111,6 +167,8 @@ public final class CompanionServer: @unchecked Sendable {
     /// calls `emit` once per NDJSON line, which we relay to the client.
     private let aiModels: (@Sendable () async -> Data?)?
     private let aiChat: (@Sendable (_ body: Data, _ emit: @escaping @Sendable (Data) -> Void) async -> Void)?
+    private let codeOps: CodeOps?
+    private let termOps: TermOps?
 
     private static let controlDecoder = JSONDecoder()
 
@@ -135,6 +193,8 @@ public final class CompanionServer: @unchecked Sendable {
                 privacy: (@Sendable () async -> Void)? = nil,
                 aiModels: (@Sendable () async -> Data?)? = nil,
                 aiChat: (@Sendable (_ body: Data, _ emit: @escaping @Sendable (Data) -> Void) async -> Void)? = nil,
+                codeOps: CodeOps? = nil,
+                termOps: TermOps? = nil,
                 onLog: @escaping @Sendable (String) -> Void) {
         self.port = NWEndpoint.Port(rawValue: port) ?? 8899
         self.authorize = authorize
@@ -157,6 +217,8 @@ public final class CompanionServer: @unchecked Sendable {
         self.privacy = privacy
         self.aiModels = aiModels
         self.aiChat = aiChat
+        self.codeOps = codeOps
+        self.termOps = termOps
         self.onLog = onLog
     }
 
@@ -389,6 +451,92 @@ public final class CompanionServer: @unchecked Sendable {
                 conn.cancel()
             }
             return
+        }
+
+        // WS /term?cwd= — a live shell (PTY) on the Mac for the Code terminal.
+        if method == "GET", path == "/term",
+           headerValue(header, "upgrade")?.lowercased() == "websocket" {
+            guard termOps != nil else { respond(conn, "404 Not Found", json: nil); return }
+            upgradeAndTerm(conn, header: header, cwd: query["cwd"]); return
+        }
+
+        // /code — native file browsing/editing for the companion's Code screen.
+        if segs.first == "code" {
+            guard let codeOps else { respond(conn, "404 Not Found", json: nil); return }
+
+            // GET /code/xcode/projects — Xcode projects/workspaces on the Mac.
+            if method == "GET", segs.count == 3, segs[1] == "xcode", segs[2] == "projects" {
+                guard let fetch = codeOps.xcodeProjects else { respond(conn, "404 Not Found", json: nil); return }
+                Task {
+                    if let listing = await fetch() {
+                        self.respond(conn, "200 OK", json: try? CompanionJSON.encoder.encode(listing))
+                    } else { self.respond(conn, "404 Not Found", json: nil) }
+                }
+                return
+            }
+            // GET /code/xcode/destinations — xcodebuild destination strings.
+            if method == "GET", segs.count == 3, segs[1] == "xcode", segs[2] == "destinations" {
+                guard let fetch = codeOps.xcodeDestinations else { respond(conn, "404 Not Found", json: nil); return }
+                Task {
+                    if let list = await fetch() {
+                        self.respond(conn, "200 OK", json: try? CompanionJSON.encoder.encode(list))
+                    } else { self.respond(conn, "404 Not Found", json: nil) }
+                }
+                return
+            }
+            // GET /code/xcode/schemes?path= — a project's schemes (xcodebuild).
+            if method == "GET", segs.count == 3, segs[1] == "xcode", segs[2] == "schemes" {
+                guard let fetch = codeOps.xcodeSchemes else { respond(conn, "404 Not Found", json: nil); return }
+                let project = query["path"] ?? ""
+                Task {
+                    if let schemes = await fetch(project) {
+                        self.respond(conn, "200 OK", json: try? CompanionJSON.encoder.encode(schemes))
+                    } else { self.respond(conn, "502 Bad Gateway", json: nil) }
+                }
+                return
+            }
+            // GET /code/list?path= — directory listing (folders first).
+            if method == "GET", segs.count == 2, segs[1] == "list" {
+                let dir = query["path"] ?? "~"
+                Task {
+                    if let listing = await codeOps.list(dir) {
+                        self.respond(conn, "200 OK", json: try? CompanionJSON.encoder.encode(listing))
+                    } else { self.respond(conn, "404 Not Found", json: nil) }
+                }
+                return
+            }
+            // GET /code/file?path= — read a text file (415 if not UTF-8 text).
+            if method == "GET", segs.count == 2, segs[1] == "file" {
+                let file = query["path"] ?? ""
+                Task {
+                    if let dto = await codeOps.read(file) {
+                        self.respond(conn, "200 OK", json: try? CompanionJSON.encoder.encode(dto))
+                    } else { self.respond(conn, "415 Unsupported Media Type", json: nil) }
+                }
+                return
+            }
+            // PUT /code/file — write a text file back.
+            if method == "PUT", segs.count == 2, segs[1] == "file" {
+                guard let dto = try? CompanionJSON.decoder.decode(CompanionCodeFileDTO.self, from: body) else {
+                    respond(conn, "400 Bad Request", json: nil); return
+                }
+                Task {
+                    let ok = await codeOps.write(dto.path, dto.content)
+                    self.respond(conn, ok ? "200 OK" : "409 Conflict", json: nil)
+                }
+                return
+            }
+            // POST /code/open — open the path in the Mac's editor.
+            if method == "POST", segs.count == 2, segs[1] == "open" {
+                guard let dto = try? CompanionJSON.decoder.decode(CompanionCodeOpenDTO.self, from: body) else {
+                    respond(conn, "400 Bad Request", json: nil); return
+                }
+                Task {
+                    let ok = await codeOps.open(dto.path)
+                    self.respond(conn, ok ? "200 OK" : "409 Conflict", json: nil)
+                }
+                return
+            }
         }
 
         // GET /builds
@@ -648,6 +796,108 @@ public final class CompanionServer: @unchecked Sendable {
                 })
             }
         })
+    }
+
+    // MARK: Terminal (bidirectional)
+
+    /// Upgrade to WebSocket and bridge a PTY session: raw shell output goes
+    /// out as binary frames; JSON text frames carry keystrokes and resizes in.
+    private func upgradeAndTerm(_ conn: NWConnection, header: String, cwd: String?) {
+        guard let ops = termOps else { respond(conn, "404 Not Found", json: nil); return }
+        guard let key = headerValue(header, "sec-websocket-key") else { respond(conn, "400 Bad Request", json: nil); return }
+        let magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        let accept = Data(Insecure.SHA1.hash(data: Data((key + magic).utf8))).base64EncodedString()
+        let handshake = "HTTP/1.1 101 Switching Protocols\r\n"
+            + "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n"
+
+        let sessionID = UUID().uuidString
+        let state = WSState()
+        state.onClose = { Task { await ops.close(sessionID) } }
+
+        conn.send(content: Data(handshake.utf8), completion: .contentProcessed { [weak self] _ in
+            guard let self else { return }
+            Task {
+                // Output path: PTY bytes → binary frames, straight to the socket.
+                let started = await ops.start(sessionID, cwd) { [weak conn] bytes in
+                    guard let conn, state.open else { return }
+                    self.send(conn, payload: bytes, opcode: 0x82)
+                }
+                guard started else {
+                    state.open = false
+                    conn.cancel()
+                    return
+                }
+                // Input path: parse client frames on the server queue.
+                self.queue.async { self.readTerm(conn, buffer: Data(), state: state, ops: ops, id: sessionID) }
+            }
+        })
+    }
+
+    private func readTerm(_ conn: NWConnection, buffer: Data, state: WSState,
+                          ops: TermOps, id: String) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { conn.cancel(); return }
+            var acc = buffer
+            if let data, !data.isEmpty { acc.append(data) }
+            let leftover = self.parseFrames(acc, conn: conn) { payload in
+                guard let inbound = try? Self.controlDecoder.decode(TermInbound.self, from: payload) else { return }
+                switch inbound.t {
+                case "in":
+                    if let d = inbound.d, let bytes = Data(base64Encoded: d) {
+                        Task { await ops.input(id, bytes) }
+                    }
+                case "size":
+                    if let c = inbound.c, let r = inbound.r {
+                        Task { await ops.resize(id, c, r) }
+                    }
+                default: break
+                }
+            }
+            if isComplete || error != nil {
+                state.open = false
+                state.onClose?(); state.onClose = nil
+                conn.cancel(); return
+            }
+            self.readTerm(conn, buffer: leftover, state: state, ops: ops, id: id)
+        }
+    }
+
+    /// Parse complete masked client frames, handing each text/binary payload
+    /// to `onPayload`; returns trailing partial-frame bytes.
+    private func parseFrames(_ buffer: Data, conn: NWConnection,
+                             onPayload: (Data) -> Void) -> Data {
+        let buf = [UInt8](buffer)
+        var off = 0
+        while buf.count - off >= 2 {
+            let opcode = buf[off] & 0x0F
+            let masked = (buf[off + 1] & 0x80) != 0
+            var len = Int(buf[off + 1] & 0x7F)
+            var hdr = 2
+            if len == 126 {
+                guard buf.count - off >= 4 else { break }
+                len = Int(buf[off + 2]) << 8 | Int(buf[off + 3]); hdr = 4
+            } else if len == 127 {
+                guard buf.count - off >= 10 else { break }
+                len = 0; for k in 0..<8 { len = (len << 8) | Int(buf[off + 2 + k]) }; hdr = 10
+            }
+            let maskLen = masked ? 4 : 0
+            let total = hdr + maskLen + len
+            guard buf.count - off >= total else { break }
+
+            var payload = Array(buf[(off + hdr + maskLen)..<(off + total)])
+            if masked {
+                let key = Array(buf[(off + hdr)..<(off + hdr + 4)])
+                for i in 0..<payload.count { payload[i] ^= key[i % 4] }
+            }
+            off += total
+
+            switch opcode {
+            case 0x8: conn.cancel(); return Data()          // close
+            case 0x1, 0x2: onPayload(Data(payload))         // text / binary
+            default: break                                  // ping/pong — ignore
+            }
+        }
+        return off < buf.count ? Data(buf[off...]) : Data()
     }
 
     // MARK: Remote control (inbound)
