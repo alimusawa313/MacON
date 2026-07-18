@@ -145,8 +145,10 @@ final class CompanionManager: ObservableObject {
     private static let unlockAccount = "companion.unlockPassword"
     private let ollama = OllamaService()
     private let terminal = TerminalBridge()
-    private let flowStore = FlowStore()
-    private let flowEngine: FlowEngine
+    /// Exposed so the Mac's own Flows editor drives the same store + engine
+    /// the companion reaches over the network — one source of truth.
+    let flowStore = FlowStore()
+    let flowEngine: FlowEngine
     private let flowScheduler = FlowScheduler()
     private var tunnelSink: AnyCancellable?
 

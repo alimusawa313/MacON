@@ -15,6 +15,7 @@ enum SidebarSelection: Hashable {
     case runner(UUID)
     case pipeline(UUID)
     case fleet
+    case flows
 }
 
 struct ContentView: View {
@@ -51,6 +52,15 @@ struct ContentView: View {
 
                 Section {
                     HStack(spacing: 11) {
+                        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill")
+                            .foregroundStyle(world.primary)
+                            .frame(width: 15)
+                        Text("Flows").font(.body.weight(.medium))
+                    }
+                    .padding(.vertical, 3)
+                    .tag(SidebarSelection.flows)
+
+                    HStack(spacing: 11) {
                         Image(systemName: "square.stack.3d.up.fill")
                             .foregroundStyle(world.primary)
                             .frame(width: 15)
@@ -60,7 +70,7 @@ struct ContentView: View {
                     }
                     .padding(.vertical, 3)
                     .tag(SidebarSelection.fleet)
-                } header: { sectionHeader("Cluster", "cpu.fill", world.good) }
+                } header: { sectionHeader("Automations", "wand.and.stars", world.good) }
             }
             .navigationSplitViewColumnWidth(min: 250, ideal: 280)
             .safeAreaInset(edge: .bottom) { poolBar }
@@ -134,6 +144,8 @@ struct ContentView: View {
             } else { welcome }
         case .fleet:
             FleetView(world: world)
+        case .flows:
+            FlowsView().environmentObject(companion)
         case nil:
             welcome
         }
