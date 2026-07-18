@@ -17,6 +17,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
+    @AppStorage(AppearanceMode.key) private var appearanceRaw = AppearanceMode.auto.rawValue
     @State private var secretRows: [SecretRow] = []
     @State private var exportWithSecrets = false
     @State private var showPairing = false
@@ -137,18 +138,24 @@ struct SettingsView: View {
         Section {
             caption("The world the whole app is made of — colors, models, and every screen's paint. "
                     + "Shared look with the companion app; applies instantly and is remembered.")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(WorldTheme.allCases) { theme in
-                        WorldPreviewCard(theme: theme,
-                                         selected: worldRaw == theme.rawValue) {
-                            worldRaw = theme.rawValue
-                        }
+            Picker("Appearance", selection: $appearanceRaw) {
+                ForEach(AppearanceMode.allCases) { mode in
+                    Label(mode.label, systemImage: mode.symbol).tag(mode.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            caption("Auto follows the system look. Always-dark worlds (neon, cosmos, holo) stay dark either way.")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)],
+                      spacing: 14) {
+                ForEach(WorldTheme.allCases) { theme in
+                    WorldPreviewCard(theme: theme,
+                                     selected: worldRaw == theme.rawValue) {
+                        worldRaw = theme.rawValue
                     }
                 }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 2)
             }
+            .padding(.vertical, 6)
         } header: { WorldSectionHeader(title: "World", symbol: "cube.fill", world: world) }
     }
 
