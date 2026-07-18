@@ -13,6 +13,62 @@ import SwiftUI
 import SceneKit
 import AppKit
 
+// MARK: - Throttled view
+
+/// SCNView that stops burning CPU when nobody can see it. The clay worlds
+/// run repeat-forever actions, so a stock SCNView re-renders at full frame
+/// rate for as long as the app lives — a whole core, even behind other
+/// windows. This one caps at 30fps (the float/sway reads identically),
+/// drops to 10fps while the app is in the background, and pauses the scene
+/// outright while its window is occluded, miniaturized or closed.
+final class WorldSCNView: SCNView {
+    private var appObservers: [NSObjectProtocol] = []
+
+    init() {
+        super.init(frame: .zero, options: nil)
+        preferredFramesPerSecond = 30
+        let nc = NotificationCenter.default
+        for name in [NSApplication.didBecomeActiveNotification,
+                     NSApplication.didResignActiveNotification] {
+            appObservers.append(nc.addObserver(forName: name, object: nil, queue: .main) {
+                [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshThrottle() }
+            })
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    deinit {
+        appObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    // A replaced scene arrives un-paused — re-apply the current state.
+    override var scene: SCNScene? {
+        didSet { refreshThrottle() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(
+            self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(occlusionChanged),
+                name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        }
+        refreshThrottle()
+    }
+
+    @objc private func occlusionChanged() { refreshThrottle() }
+
+    private func refreshThrottle() {
+        let visible = window?.occlusionState.contains(.visible) ?? false
+        scene?.isPaused = !visible
+        preferredFramesPerSecond = NSApp.isActive ? 30 : 10
+    }
+}
+
 // MARK: - Live stage (welcome pane)
 
 /// The 3D stage: title + state-reactive machine, painted with the active
@@ -79,7 +135,7 @@ struct WorldStage: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> SCNView {
-        let view = SCNView()
+        let view = WorldSCNView()
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling4X
         view.scene = WorldScene.build(title: title, figure: figure,
@@ -177,7 +233,7 @@ struct FleetStage: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> SCNView {
-        let view = SCNView()
+        let view = WorldSCNView()
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling4X
         view.scene = WorldScene.buildFleet(dark: dark, theme: theme)
@@ -210,7 +266,7 @@ struct WorldSprite: NSViewRepresentable {
     private var cacheKey: String { "\(dark)|\(theme.rawValue)" }
 
     func makeNSView(context: Context) -> SCNView {
-        let view = SCNView()
+        let view = WorldSCNView()
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling4X
         view.scene = WorldScene.buildSprite(dark: dark, theme: theme)
