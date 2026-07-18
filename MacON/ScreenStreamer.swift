@@ -240,7 +240,10 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
             config.queueDepth = 5
             config.showsCursor = true
-            config.pixelFormat = kCVPixelFormatType_32BGRA
+            // Capture straight into the encoder's native 4:2:0 YUV. With BGRA,
+            // VideoToolbox color-converted every frame on the CPU — at 60fps
+            // Retina sizes that alone pinned a couple of cores.
+            config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             config.captureResolution = .best                                 // highest fidelity
             config.colorSpaceName = CGColorSpace.sRGB                        // keep screen colors
             self.config = config
@@ -265,13 +268,25 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     // MARK: Encoder
 
     private func setupEncoder(width: Int32, height: Int32) {
+        // Insist on the hardware encoder — a silent software fallback would
+        // burn CPU at 60fps. If this Mac somehow has none, retry without the
+        // requirement rather than not streaming at all.
+        let hardware = [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: kCFBooleanTrue!] as CFDictionary
         var s: VTCompressionSession?
-        let status = VTCompressionSessionCreate(
+        var status = VTCompressionSessionCreate(
             allocator: nil, width: width, height: height,
             codecType: kCMVideoCodecType_H264,
-            encoderSpecification: nil, imageBufferAttributes: nil,
+            encoderSpecification: hardware, imageBufferAttributes: nil,
             compressedDataAllocator: nil, outputCallback: nil, refcon: nil,
             compressionSessionOut: &s)
+        if status != noErr {
+            status = VTCompressionSessionCreate(
+                allocator: nil, width: width, height: height,
+                codecType: kCMVideoCodecType_H264,
+                encoderSpecification: nil, imageBufferAttributes: nil,
+                compressedDataAllocator: nil, outputCallback: nil, refcon: nil,
+                compressionSessionOut: &s)
+        }
         guard status == noErr, let session = s else { return }
 
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
