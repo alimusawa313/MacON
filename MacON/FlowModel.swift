@@ -15,7 +15,7 @@ import Foundation
 
 // MARK: - Flow (the graph)
 
-nonisolated struct FlowNode: Codable, Identifiable {
+nonisolated struct FlowNode: Codable, Identifiable, Hashable {
     var id: String
     var type: String               // block type, e.g. "ai.ollama", "sys.shell"
     var name: String?              // user override of the block's title
@@ -25,27 +25,32 @@ nonisolated struct FlowNode: Codable, Identifiable {
     var enabled: Bool = true
 }
 
-nonisolated struct FlowEdge: Codable, Identifiable {
+nonisolated struct FlowEdge: Codable, Identifiable, Hashable {
     var id: String
     var from: String               // source node id
     var port: String               // source port ("out", or "true"/"false" on If)
     var to: String                 // destination node id
 }
 
-nonisolated struct Flow: Codable, Identifiable {
+nonisolated struct Flow: Codable, Identifiable, Hashable {
     var id: String
     var name: String
     var nodes: [FlowNode]
     var edges: [FlowEdge]
     var createdAt: Date
     var updatedAt: Date
+
+    static func empty(name: String) -> Flow {
+        Flow(id: UUID().uuidString, name: name, nodes: [], edges: [],
+             createdAt: Date(), updatedAt: Date())
+    }
 }
 
 nonisolated struct FlowsListDTO: Codable { var flows: [Flow] }
 
 // MARK: - Runs (history + live state)
 
-nonisolated struct FlowNodeResult: Codable {
+nonisolated struct FlowNodeResult: Codable, Hashable {
     var nodeId: String
     var status: String             // "running" | "ok" | "failed" | "skipped"
     var output: String
@@ -53,7 +58,7 @@ nonisolated struct FlowNodeResult: Codable {
     var ms: Int
 }
 
-nonisolated struct FlowRun: Codable, Identifiable {
+nonisolated struct FlowRun: Codable, Identifiable, Hashable {
     var id: String
     var flowId: String
     var flowName: String
@@ -62,6 +67,8 @@ nonisolated struct FlowRun: Codable, Identifiable {
     var startedAt: Date
     var finishedAt: Date?
     var results: [FlowNodeResult]
+
+    var isRunning: Bool { status == "running" }
 }
 
 nonisolated struct FlowRunsDTO: Codable { var runs: [FlowRun] }

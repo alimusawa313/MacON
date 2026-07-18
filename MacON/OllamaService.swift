@@ -49,6 +49,25 @@ struct OllamaService {
         return try? JSONEncoder().encode(AIModelsDTO(models: out))
     }
 
+    /// Installed models WITHOUT waking Ollama — for pickers (the Flows block
+    /// inspector) that shouldn't launch it just by being opened. Empty when
+    /// Ollama isn't already running.
+    func installedModels() async -> [AIModelDTO] {
+        guard await ping(), let tags = try? await tags() else { return [] }
+        var out: [AIModelDTO] = []
+        await withTaskGroup(of: AIModelDTO?.self) { group in
+            for tag in tags {
+                group.addTask {
+                    let caps = (try? await self.capabilities(tag.name)) ?? []
+                    return AIModelDTO(name: tag.name, size: tag.size,
+                                      vision: caps.contains("vision"))
+                }
+            }
+            for await model in group { if let model { out.append(model) } }
+        }
+        return out.sorted { $0.name < $1.name }
+    }
+
     /// Number of installed models, or nil if Ollama isn't reachable — for the
     /// settings status line. Starts Ollama if it isn't running.
     func probe() async -> Int? {
