@@ -27,8 +27,9 @@ struct MacONApp: App {
                 .environmentObject(companion)
                 .environmentObject(curtain)
                 .tint(Color(nsColor: worldTheme.palette.primary))
-                // Always-dark worlds (neon, cosmos) render the whole UI dark.
-                .preferredColorScheme(worldTheme.prefersDark ? .dark : nil)
+                // Auto/Light/Dark per the user's setting; always-dark
+                // worlds (neon, cosmos) render dark regardless.
+                .worldColorScheme()
                 .task {
                     // The Dock wears the active world from the first frame.
                     DockIcon.apply(worldTheme)

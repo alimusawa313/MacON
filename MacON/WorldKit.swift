@@ -118,6 +118,55 @@ enum WorldTheme: String, CaseIterable, Identifiable {
     var prefersDark: Bool { palette.paperLight.isDarkColor }
 }
 
+// MARK: - Appearance (Auto / Light / Dark)
+
+/// The user's appearance override: Auto follows the system, Light/Dark pin
+/// the app. Always-dark worlds (neon, cosmos, holo) stay dark regardless —
+/// their paper has no light look.
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case auto, light, dark
+    static let key = "macon.appearance"
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .auto:  return "Auto"
+        case .light: return "Light"
+        case .dark:  return "Dark"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .auto:  return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark:  return "moon.fill"
+        }
+    }
+}
+
+/// Owns the theme + appearance storage so the window re-renders when
+/// either changes.
+private struct WorldSchemeModifier: ViewModifier {
+    @AppStorage(WorldStyle.themeKey) private var worldRaw = WorldTheme.pastel.rawValue
+    @AppStorage(AppearanceMode.key) private var appearanceRaw = AppearanceMode.auto.rawValue
+
+    func body(content: Content) -> some View {
+        let theme = WorldTheme(rawValue: worldRaw) ?? .pastel
+        let mode = AppearanceMode(rawValue: appearanceRaw) ?? .auto
+        content.preferredColorScheme(
+            theme.prefersDark ? .dark
+            : mode == .light ? .light
+            : mode == .dark ? .dark
+            : nil)
+    }
+}
+
+extension View {
+    /// The world's color scheme under the user's Auto/Light/Dark setting.
+    func worldColorScheme() -> some View { modifier(WorldSchemeModifier()) }
+}
+
 // MARK: - Palettes
 
 struct WorldPalette {
