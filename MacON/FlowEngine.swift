@@ -87,8 +87,21 @@ actor FlowEngine {
         var anyFailed = false
         var cancelled = false
 
+        // Loop bodies: everything downstream of a loop's "each" port runs
+        // inside that loop's iterations, not in the main pass.
+        var bodyOf: [String: String] = [:]                // node → its loop
+        for loop in nodes where loop.type == "logic.loop" || loop.type == "logic.repeat" {
+            var frontier = edges.filter { $0.from == loop.id && $0.port == "each" }.map(\.to)
+            while let id = frontier.popLast() {
+                guard id != loop.id, bodyOf[id] == nil else { continue }
+                bodyOf[id] = loop.id
+                frontier += edges.filter { $0.from == id }.map(\.to)
+            }
+        }
+
         for id in order {
             guard let node = byId[id] else { continue }
+            if bodyOf[id] != nil { continue }             // runs inside its loop
             if Task.isCancelled { cancelled = true; break }
 
             // Inputs: everything delivered on edges into this node. A source
@@ -108,8 +121,17 @@ actor FlowEngine {
                                             output: "", error: nil, ms: 0))
             let began = Date()
             do {
-                let out = try await run(node: node, input: input,
+                let out: [String: String]
+                if node.type == "logic.loop" || node.type == "logic.repeat" {
+                    out = try await runLoop(node, input: input, runId: runId,
+                                            order: order, edges: edges, byId: byId,
+                                            bodyOf: bodyOf, outputs: outputs,
+                                            payload: payload, trigger: trigger,
+                                            finished: &finished)
+                } else {
+                    out = try await run(node: node, input: input,
                                         payload: payload, trigger: trigger)
+                }
                 outputs[id] = out
                 let shown = out["out"] ?? out.values.first ?? ""
                 setResult(runId, FlowNodeResult(
@@ -160,6 +182,103 @@ actor FlowEngine {
         s.count <= max ? s : String(s.prefix(max)) + "\n… (truncated)"
     }
 
+    // MARK: Loops
+
+    /// Run a For Each / Repeat block: everything hanging off its "each" port
+    /// executes once per item, and the body's leaf outputs — one per
+    /// iteration — come back joined on the "done" port. Iterations run the
+    /// body in topological order with the loop item delivered where the
+    /// "each" strings point.
+    private func runLoop(_ node: FlowNode, input: String, runId: String,
+                         order: [String], edges: [FlowEdge], byId: [String: FlowNode],
+                         bodyOf: [String: String], outputs: [String: [String: String]],
+                         payload: String?, trigger: String,
+                         finished: inout Set<String>) async throws -> [String: String] {
+        let bodyOrder = order.filter { bodyOf[$0] == node.id }
+        guard !bodyOrder.isEmpty else {
+            throw Fail("Nothing on the \"each\" branch — wire a block to the top port.")
+        }
+        if bodyOrder.contains(where: {
+            byId[$0]?.type == "logic.loop" || byId[$0]?.type == "logic.repeat"
+        }) {
+            throw Fail("Loops can't nest (yet).")
+        }
+
+        let maxItems = 100
+        var items: [String]
+        if node.type == "logic.repeat" {
+            let n = min(max(Int(node.params["times"] ?? "") ?? 3, 1), maxItems)
+            items = Array(repeating: input, count: n)
+        } else {
+            items = input.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
+        var dropped = 0
+        if items.count > maxItems {
+            dropped = items.count - maxItems
+            items = Array(items.prefix(maxItems))
+        }
+
+        // A body leaf feeds nothing else inside the body — its output is what
+        // each iteration contributes.
+        let leaves = bodyOrder.filter { bid in
+            !edges.contains { $0.from == bid && bodyOf[$0.to] == node.id }
+        }
+
+        var collected: [String] = []
+        for (index, item) in items.enumerated() {
+            if Task.isCancelled { throw CancellationError() }
+            var local: [String: [String: String]] = [:]
+            for bid in bodyOrder {
+                guard let bnode = byId[bid] else { continue }
+                let incoming = edges.filter { $0.to == bid }
+                var delivered: [String] = []
+                for edge in incoming {
+                    if edge.from == node.id && edge.port == "each" {
+                        delivered.append(item)
+                    } else if bodyOf[edge.from] == node.id {
+                        if let v = local[edge.from]?[edge.port] { delivered.append(v) }
+                    } else if let v = outputs[edge.from]?[edge.port] {
+                        delivered.append(v)
+                    }
+                }
+                if !incoming.isEmpty && delivered.isEmpty { continue }   // untaken branch
+                let binput = delivered.joined(separator: "\n\n")
+
+                setResult(runId, FlowNodeResult(
+                    nodeId: bid, status: "running",
+                    output: "item \(index + 1)/\(items.count)", error: nil, ms: 0))
+                let began = Date()
+                do {
+                    let out = try await run(node: bnode, input: binput,
+                                            payload: payload, trigger: trigger)
+                    local[bid] = out
+                    let shown = out["out"] ?? out.values.first ?? ""
+                    setResult(runId, FlowNodeResult(
+                        nodeId: bid, status: "ok",
+                        output: Self.clip("item \(index + 1)/\(items.count)\n" + shown),
+                        error: nil, ms: Int(Date().timeIntervalSince(began) * 1000)))
+                } catch {
+                    setResult(runId, FlowNodeResult(
+                        nodeId: bid, status: "failed", output: "",
+                        error: Self.clip(error.localizedDescription),
+                        ms: Int(Date().timeIntervalSince(began) * 1000)))
+                    throw Fail("Item \(index + 1) failed at \"\(bnode.type)\": \(error.localizedDescription)")
+                }
+            }
+            let contribution = leaves.compactMap {
+                local[$0]?["out"] ?? local[$0]?.values.first
+            }.joined(separator: "\n")
+            if !contribution.isEmpty { collected.append(contribution) }
+        }
+        finished.formUnion(bodyOrder)
+
+        var done = collected.joined(separator: "\n")
+        if dropped > 0 { done += "\n… (\(dropped) more items skipped — 100 max)" }
+        return ["done": done]
+    }
+
     // MARK: One node
 
     /// Run one block; the returned dictionary maps output ports to text
@@ -180,7 +299,7 @@ actor FlowEngine {
         // MARK: Triggers (sources — they emit what started the run)
         case "trigger.manual":
             return ["out": payload?.isEmpty == false ? payload! : param("payload", "run")]
-        case "trigger.schedule", "trigger.watch":
+        case "trigger.schedule", "trigger.watch", "trigger.daily":
             return ["out": payload?.isEmpty == false ? payload!
                 : ISO8601DateFormatter().string(from: Date())]
 
@@ -216,6 +335,19 @@ actor FlowEngine {
                 model: param("model"),
                 system: "You extract structured data. Reply with only a JSON object, no code fences.",
                 prompt: "Extract these fields as JSON: \(fields)\n\nFrom:\n\n\(input)")]
+        case "ai.rewrite":
+            let styles = [
+                "formal": "more formal and professional",
+                "casual": "more casual and friendly",
+                "shorter": "significantly shorter, keeping every key point",
+                "longer": "more detailed and fleshed out",
+                "bullets": "a clean bulleted list",
+            ]
+            let style = styles[param("style", "shorter")] ?? styles["shorter"]!
+            return ["out": try await ollamaChat(
+                model: param("model"),
+                system: "You rewrite text. Reply with only the rewritten text.",
+                prompt: "Rewrite this as \(style):\n\n\(input)")]
         case "ai.vision":
             // Input is an image path (e.g. from Screenshot or Watch Folder).
             let path = Self.expand(input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -257,6 +389,41 @@ actor FlowEngine {
             let words = input.split { $0.isWhitespace || $0.isNewline }.count
             let lines = input.components(separatedBy: .newlines).count
             return ["out": "\(input.count) characters, \(words) words, \(lines) lines"]
+        case "text.sort":
+            let lines = input.components(separatedBy: .newlines).filter { !$0.isEmpty }
+            let sorted = lines.sorted {
+                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+            return ["out": (param("order", "az") == "za" ? sorted.reversed() : sorted)
+                .joined(separator: "\n")]
+        case "text.unique":
+            var seen = Set<String>()
+            return ["out": input.components(separatedBy: .newlines)
+                .filter { !$0.isEmpty && seen.insert($0).inserted }
+                .joined(separator: "\n")]
+        case "text.first":
+            let n = max(Int(param("count", "5")) ?? 5, 1)
+            return ["out": input.components(separatedBy: .newlines)
+                .filter { !$0.isEmpty }.prefix(n).joined(separator: "\n")]
+        case "text.base64":
+            if param("mode", "encode") == "decode" {
+                guard let data = Data(base64Encoded: input
+                    .trimmingCharacters(in: .whitespacesAndNewlines)),
+                      let text = String(data: data, encoding: .utf8) else {
+                    throw Fail("Input isn't valid base64 text")
+                }
+                return ["out": text]
+            }
+            return ["out": Data(input.utf8).base64EncodedString()]
+        case "text.date":
+            let now = Date()
+            switch param("format", "datetime") {
+            case "iso":  return ["out": ISO8601DateFormatter().string(from: now)]
+            case "date": return ["out": now.formatted(date: .abbreviated, time: .omitted)]
+            case "time": return ["out": now.formatted(date: .omitted, time: .shortened)]
+            case "unix": return ["out": String(Int(now.timeIntervalSince1970))]
+            default:     return ["out": now.formatted(date: .abbreviated, time: .shortened)]
+            }
 
         // MARK: Files
         case "file.read":
@@ -291,6 +458,31 @@ actor FlowEngine {
             let names = try FileManager.default.contentsOfDirectory(atPath: path)
                 .filter { !$0.hasPrefix(".") }.sorted()
             return ["out": names.joined(separator: "\n")]
+        case "file.move", "file.copy":
+            let source = Self.expand(param("from", input)
+                .components(separatedBy: .newlines).first ?? "")
+            var dest = Self.expand(param("to"))
+            guard !source.isEmpty, !dest.isEmpty else { throw Fail("Set a destination path") }
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: dest, isDirectory: &isDir), isDir.boolValue {
+                dest = (dest as NSString).appendingPathComponent((source as NSString).lastPathComponent)
+            }
+            try? FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: dest).deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            if node.type == "file.move" {
+                try FileManager.default.moveItem(atPath: source, toPath: dest)
+            } else {
+                try FileManager.default.copyItem(atPath: source, toPath: dest)
+            }
+            return ["out": dest]
+        case "file.trash":
+            let path = Self.expand(param("path", input)
+                .components(separatedBy: .newlines).first ?? "")
+            guard !path.isEmpty else { throw Fail("Nothing to trash") }
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path),
+                                              resultingItemURL: nil)
+            return ["out": path]
 
         // MARK: System
         case "sys.shell":
@@ -339,6 +531,14 @@ actor FlowEngine {
                 "~/Desktop/macon-flow-\(Int(Date().timeIntervalSince1970)).png"))
             _ = try await Self.process("/usr/sbin/screencapture", ["-x", path], timeout: 15)
             return ["out": path]
+        case "sys.volume":
+            let level = min(max(Int(param("level", "50")) ?? 50, 0), 100)
+            _ = try await Self.process("/usr/bin/osascript",
+                ["-e", "set volume output volume \(level)"], timeout: 10)
+            return ["out": "Volume set to \(level)%"]
+        case "sys.sleepdisplay":
+            _ = try await Self.process("/usr/bin/pmset", ["displaysleepnow"], timeout: 10)
+            return ["out": "Display slept"]
         case "sys.info":
             let battery = (try? await Self.process("/usr/bin/pmset", ["-g", "batt"], timeout: 5)) ?? ""
             let uptime = (try? await Self.process("/usr/bin/uptime", [], timeout: 5)) ?? ""
@@ -349,6 +549,73 @@ actor FlowEngine {
                 \(battery.trimmingCharacters(in: .whitespacesAndNewlines))
                 \(disk.trimmingCharacters(in: .whitespacesAndNewlines))
                 """]
+
+        // MARK: Apps
+        case "app.launch":
+            let app = param("app", input).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !app.isEmpty else { throw Fail("Which app?") }
+            _ = try await Self.process("/usr/bin/open", ["-a", app], timeout: 15)
+            return ["out": "Launched \(app)"]
+        case "app.quit":
+            let app = param("app").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !app.isEmpty else { throw Fail("Which app?") }
+            _ = try await Self.process("/usr/bin/osascript",
+                ["-e", "tell application \"\(Self.appleScriptQuote(app))\" to quit"], timeout: 15)
+            return ["out": "Quit \(app)"]
+        case "app.front":
+            let name = await MainActor.run {
+                NSWorkspace.shared.frontmostApplication?.localizedName
+            }
+            return ["out": name ?? "Unknown"]
+        case "app.music":
+            let action = param("action", "playpause")
+            let verb: String
+            switch action {
+            case "play":     verb = "play"
+            case "pause":    verb = "pause"
+            case "next":     verb = "next track"
+            case "previous": verb = "previous track"
+            default:         verb = "playpause"
+            }
+            _ = try await Self.process("/usr/bin/osascript",
+                ["-e", "tell application \"Music\" to \(verb)"], timeout: 15)
+            let track = (try? await Self.process("/usr/bin/osascript",
+                ["-e", "tell application \"Music\" to get name of current track & \" — \" & artist of current track"],
+                timeout: 10)) ?? ""
+            return ["out": track.trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty ? "Music: \(action)" : track.trimmingCharacters(in: .whitespacesAndNewlines)]
+        case "app.safari":
+            let out = try await Self.process("/usr/bin/osascript", ["-e", """
+                tell application "Safari" to get name of front document & linefeed & URL of front document
+                """], timeout: 10)
+            let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { throw Fail("Safari has no open page") }
+            return ["out": trimmed]
+        case "app.finder":
+            let script = """
+                tell application "Finder"
+                    set out to ""
+                    repeat with f in (get selection)
+                        set out to out & POSIX path of (f as alias) & linefeed
+                    end repeat
+                    out
+                end tell
+                """
+            let out = try await Self.process("/usr/bin/osascript", ["-e", script], timeout: 10)
+            return ["out": out.trimmingCharacters(in: .whitespacesAndNewlines)]
+        case "app.shortcut":
+            let name = param("name")
+            guard !name.isEmpty else { throw Fail("Name the Shortcut to run") }
+            let dir = FileManager.default.temporaryDirectory
+            let inFile = dir.appendingPathComponent("macon-flow-in-\(UUID().uuidString).txt")
+            let outFile = dir.appendingPathComponent("macon-flow-out-\(UUID().uuidString).txt")
+            try input.write(to: inFile, atomically: true, encoding: .utf8)
+            defer { try? FileManager.default.removeItem(at: inFile)
+                    try? FileManager.default.removeItem(at: outFile) }
+            _ = try await Self.process("/usr/bin/shortcuts",
+                ["run", name, "-i", inFile.path, "-o", outFile.path], timeout: 300)
+            let result = (try? String(contentsOf: outFile, encoding: .utf8)) ?? ""
+            return ["out": result.isEmpty ? "Ran \"\(name)\"" : result]
 
         // MARK: Web
         case "web.get":
@@ -367,6 +634,45 @@ actor FlowEngine {
             let (data, resp) = try await URLSession.shared.data(for: req)
             try Self.checkHTTP(resp)
             return ["out": String(data: data, encoding: .utf8) ?? "(\(data.count) bytes, not text)"]
+        case "web.rss":
+            let url = try Self.url(fill(param("url", input)))
+            let (data, resp) = try await URLSession.shared.data(from: url)
+            try Self.checkHTTP(resp)
+            let xml = String(data: data, encoding: .utf8) ?? ""
+            // Titles the cheap way: enough for every mainstream feed, no
+            // XML dependency. First <title> is the feed's own name.
+            let regex = try NSRegularExpression(
+                pattern: "<title[^>]*>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?</title>",
+                options: [.dotMatchesLineSeparators])
+            let range = NSRange(xml.startIndex..., in: xml)
+            var titles = regex.matches(in: xml, range: range).compactMap { m -> String? in
+                Range(m.range(at: 1), in: xml).map {
+                    String(xml[$0]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            if titles.count > 1 { titles.removeFirst() }
+            let count = max(Int(param("count", "10")) ?? 10, 1)
+            guard !titles.isEmpty else { throw Fail("No headlines found — is that an RSS feed?") }
+            return ["out": titles.prefix(count).joined(separator: "\n")]
+        case "web.json":
+            guard let data = input.data(using: .utf8),
+                  var current = try? JSONSerialization.jsonObject(with: data) else {
+                throw Fail("Input isn't JSON")
+            }
+            for seg in param("path").split(separator: ".").map(String.init) where !seg.isEmpty {
+                if let dict = current as? [String: Any], let next = dict[seg] {
+                    current = next
+                } else if let arr = current as? [Any], let i = Int(seg), arr.indices.contains(i) {
+                    current = arr[i]
+                } else {
+                    throw Fail("Nothing at \"\(seg)\" in the JSON")
+                }
+            }
+            if let s = current as? String { return ["out": s] }
+            if let n = current as? NSNumber { return ["out": n.stringValue] }
+            let out = try JSONSerialization.data(withJSONObject: current,
+                                                 options: [.prettyPrinted, .fragmentsAllowed])
+            return ["out": String(data: out, encoding: .utf8) ?? ""]
         case "web.download":
             let url = try Self.url(fill(param("url", input)))
             let path = Self.expand(param("path", "~/Downloads/\(url.lastPathComponent)"))
@@ -568,6 +874,24 @@ final class FlowScheduler {
                     if last == .distantPast {
                         lastFire[node.id] = Date()
                     } else if Date().timeIntervalSince(last) >= Double(minutes) * 60 {
+                        lastFire[node.id] = Date()
+                        Task { _ = await engine.start(flow: flow, trigger: "schedule",
+                                                      payload: nil, key: nil) }
+                    }
+                case "trigger.daily":
+                    // Fires once when the clock passes HH:mm. First sighting
+                    // arms it: a time already past today waits for tomorrow.
+                    let parts = (node.params["time"] ?? "09:00").split(separator: ":")
+                    let hour = Int(parts.first ?? "9") ?? 9
+                    let minute = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+                    guard let target = Calendar.current.date(
+                        bySettingHour: min(max(hour, 0), 23),
+                        minute: min(max(minute, 0), 59),
+                        second: 0, of: Date()) else { continue }
+                    let last = lastFire[node.id] ?? .distantPast
+                    if last == .distantPast {
+                        lastFire[node.id] = Date()
+                    } else if Date() >= target && last < target {
                         lastFire[node.id] = Date()
                         Task { _ = await engine.start(flow: flow, trigger: "schedule",
                                                       payload: nil, key: nil) }
