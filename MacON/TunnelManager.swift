@@ -31,6 +31,10 @@ final class TunnelManager: ObservableObject {
 
     private var process: Process?
     private var stopRequested = false
+    private var desiredPort: Int?
+    // Auto-relaunch after an unexpected exit, with growing backoff.
+    private var retryTask: Task<Void, Never>?
+    private var retryDelay: TimeInterval = 3
 
     var publicURL: String? {
         if case .running(let url) = status { return url }
@@ -56,9 +60,14 @@ final class TunnelManager: ObservableObject {
     // MARK: Lifecycle
 
     func start(port: Int) {
-        guard process == nil else { return }
-        guard let bin = Self.binaryPath() else { status = .notInstalled; return }
+        desiredPort = port
         stopRequested = false
+        guard process == nil else { return }
+        launch(port: port)
+    }
+
+    private func launch(port: Int) {
+        guard let bin = Self.binaryPath() else { status = .notInstalled; return }
         status = .starting
 
         let p = Process()
@@ -76,7 +85,8 @@ final class TunnelManager: ObservableObject {
                                       options: .regularExpression) {
                 let url = String(text[range])
                 Task { @MainActor [weak self] in
-                    guard let self, self.process != nil else { return }
+                    guard let self, self.process === p else { return }
+                    self.retryDelay = 3                       // healthy again
                     if case .running = self.status {} else { self.status = .running(url) }
                 }
             }
@@ -84,13 +94,16 @@ final class TunnelManager: ObservableObject {
 
         p.terminationHandler = { [weak self] proc in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.process === p else { return }   // ignore a superseded process
                 pipe.fileHandleForReading.readabilityHandler = nil
                 self.process = nil
                 if self.stopRequested {
                     self.status = .off
                 } else {
-                    self.status = .failed("Tunnel exited (code \(proc.terminationStatus)). Try again.")
+                    // Unexpected exit (sleep, network blip, cloudflared crash):
+                    // come back on our own — nobody should have to press Retry.
+                    self.status = .failed("Tunnel dropped — restarting…")
+                    self.scheduleRelaunch()
                 }
             }
         }
@@ -103,8 +116,40 @@ final class TunnelManager: ObservableObject {
         }
     }
 
+    /// Retry after an unexpected exit: 3s, 6s, 12s… capped at 60s, reset the
+    /// moment a tunnel comes up healthy. Cancelled by stop()/refreshNow().
+    private func scheduleRelaunch() {
+        guard retryTask == nil, !stopRequested, desiredPort != nil else { return }
+        let delay = retryDelay
+        retryDelay = min(retryDelay * 2, 60)
+        retryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self else { return }
+            self.retryTask = nil
+            guard !self.stopRequested, self.process == nil,
+                  let port = self.desiredPort else { return }
+            self.launch(port: port)
+        }
+    }
+
+    /// Force a fresh tunnel (a new public URL) right now — e.g. after the Mac
+    /// wakes, or when the paired device asks over iCloud. The old process's
+    /// termination is ignored via the `process === p` guard, so it can't
+    /// clobber the new run's status.
+    func refreshNow() {
+        guard let port = desiredPort, !stopRequested else { return }
+        retryTask?.cancel(); retryTask = nil
+        retryDelay = 3
+        let old = process
+        process = nil
+        old?.terminate()
+        launch(port: port)
+    }
+
     func stop() {
         stopRequested = true
+        desiredPort = nil
+        retryTask?.cancel(); retryTask = nil
         process?.terminate()
         process = nil
         status = .off
