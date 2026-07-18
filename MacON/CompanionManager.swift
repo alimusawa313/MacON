@@ -383,9 +383,9 @@ final class CompanionManager: ObservableObject {
                     guard let self, await MainActor.run(body: { self.allowFlows }),
                           let flow = self.flowStore.flow(id: id) else { return nil }
                     let req = (try? CompanionJSON.decoder.decode(FlowRunRequest.self, from: body))
-                        ?? FlowRunRequest(payload: nil, key: nil)
+                        ?? FlowRunRequest(payload: nil, key: nil, keys: nil)
                     let runId = await self.flowEngine.start(flow: flow, trigger: "manual",
-                                                            payload: req.payload, key: req.key)
+                                                            payload: req.payload, keys: req.allKeys)
                     return try? CompanionJSON.encoder.encode(FlowRunStartDTO(runId: runId))
                 },
                 runs: { [weak self] id in

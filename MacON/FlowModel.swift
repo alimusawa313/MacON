@@ -67,11 +67,20 @@ nonisolated struct FlowRun: Codable, Identifiable {
 nonisolated struct FlowRunsDTO: Codable { var runs: [FlowRun] }
 nonisolated struct FlowRunStartDTO: Codable { var runId: String }
 
-/// POST /flows/{id}/run body. The Claude key rides along from the phone's
+/// POST /flows/{id}/run body. Cloud API keys ride along from the phone's
 /// Keychain (never persisted here) so cloud blocks can run on this Mac.
+/// `key` is the original Claude-only field from older companions.
 nonisolated struct FlowRunRequest: Codable {
     var payload: String?
     var key: String?
+    var keys: [String: String]?
+
+    /// Provider → key, whichever fields the companion sent.
+    var allKeys: [String: String] {
+        var out = keys ?? [:]
+        if out["anthropic"] == nil, let key, !key.isEmpty { out["anthropic"] = key }
+        return out
+    }
 }
 
 // MARK: - Store

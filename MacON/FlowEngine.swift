@@ -23,10 +23,10 @@ actor FlowEngine {
     /// Runs in flight, by run id — the poll route reads these until finished.
     private var live: [String: FlowRun] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
-    /// The Claude key from the most recent device-started run, kept in memory
-    /// only, so scheduled runs of cloud blocks keep working between launches
-    /// of the companion. Never written to disk.
-    private var rememberedKey: String?
+    /// Cloud keys (by provider) from the most recent device-started run,
+    /// kept in memory only, so scheduled runs of cloud blocks keep working
+    /// between launches of the companion. Never written to disk.
+    private var rememberedKeys: [String: String] = [:]
 
     init(store: FlowStore) {
         self.store = store
@@ -36,8 +36,11 @@ actor FlowEngine {
 
     /// Kick off a run and return its id immediately; execution continues in
     /// the background and is polled via `runDetail`.
-    func start(flow: Flow, trigger: String, payload: String?, key: String?) -> String {
-        if let key, !key.isEmpty { rememberedKey = key }
+    func start(flow: Flow, trigger: String, payload: String?,
+               keys: [String: String] = [:]) -> String {
+        for (provider, key) in keys where !key.isEmpty {
+            rememberedKeys[provider] = key
+        }
         let runId = UUID().uuidString
         let run = FlowRun(id: runId, flowId: flow.id, flowName: flow.name,
                           trigger: trigger, status: "running",
@@ -311,6 +314,14 @@ actor FlowEngine {
         case "ai.claude":
             return ["out": try await claudeChat(
                 model: param("model", "claude-sonnet-5"), system: param("system"),
+                prompt: fill(param("prompt", "{{input}}")))]
+        case "ai.openai":
+            return ["out": try await openaiChat(
+                model: param("model", "gpt-5.1"), system: param("system"),
+                prompt: fill(param("prompt", "{{input}}")))]
+        case "ai.gemini":
+            return ["out": try await geminiChat(
+                model: param("model", "gemini-2.5-flash"), system: param("system"),
                 prompt: fill(param("prompt", "{{input}}")))]
         case "ai.summarize":
             let length = param("length", "short")
@@ -745,10 +756,17 @@ actor FlowEngine {
         return resp.message?.content ?? ""
     }
 
-    private func claudeChat(model: String, system: String, prompt: String) async throws -> String {
-        guard let key = rememberedKey, !key.isEmpty else {
-            throw Fail("No Claude API key on this Mac yet — run the flow once from the companion.")
+    /// A provider's key from the last device-started run, or a clear error.
+    private func cloudKey(_ provider: String, label: String) throws -> String {
+        guard let key = rememberedKeys[provider], !key.isEmpty else {
+            throw Fail("No \(label) API key on this Mac yet — add one in the block's "
+                       + "settings on the companion, then run the flow once from there.")
         }
+        return key
+    }
+
+    private func claudeChat(model: String, system: String, prompt: String) async throws -> String {
+        let key = try cloudKey("anthropic", label: "Claude")
         struct Msg: Encodable { let role: String; let content: String }
         struct Req: Encodable {
             let model: String; let maxTokens: Int
@@ -774,6 +792,61 @@ actor FlowEngine {
         let resp = try JSONDecoder().decode(Resp.self, from: data)
         if let message = resp.error?.message { throw Fail("Claude: \(message)") }
         return resp.content?.compactMap(\.text).joined() ?? ""
+    }
+
+    private func openaiChat(model: String, system: String, prompt: String) async throws -> String {
+        let key = try cloudKey("openai", label: "OpenAI")
+        struct Msg: Codable { let role: String; let content: String }
+        struct Req: Encodable { let model: String; let messages: [Msg] }
+        struct Resp: Decodable {
+            struct Choice: Decodable { let message: Msg? }
+            struct Err: Decodable { let message: String? }
+            let choices: [Choice]?
+            let error: Err?
+        }
+        var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 300
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var messages: [Msg] = []
+        if !system.isEmpty { messages.append(Msg(role: "system", content: system)) }
+        messages.append(Msg(role: "user", content: prompt))
+        req.httpBody = try JSONEncoder().encode(Req(model: model, messages: messages))
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let resp = try JSONDecoder().decode(Resp.self, from: data)
+        if let message = resp.error?.message { throw Fail("OpenAI: \(message)") }
+        return resp.choices?.first?.message?.content ?? ""
+    }
+
+    private func geminiChat(model: String, system: String, prompt: String) async throws -> String {
+        let key = try cloudKey("gemini", label: "Gemini")
+        struct Part: Codable { let text: String }
+        struct Content: Codable { var role: String?; let parts: [Part] }
+        struct Req: Encodable {
+            let contents: [Content]
+            let systemInstruction: Content?
+        }
+        struct Resp: Decodable {
+            struct Candidate: Decodable { let content: Content? }
+            struct Err: Decodable { let message: String? }
+            let candidates: [Candidate]?
+            let error: Err?
+        }
+        guard let url = URL(string:
+            "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(key)")
+        else { throw Fail("Bad Gemini model name") }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 300
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(Req(
+            contents: [Content(role: "user", parts: [Part(text: prompt)])],
+            systemInstruction: system.isEmpty ? nil : Content(role: nil, parts: [Part(text: system)])))
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let resp = try JSONDecoder().decode(Resp.self, from: data)
+        if let message = resp.error?.message { throw Fail("Gemini: \(message)") }
+        return resp.candidates?.first?.content?.parts.map(\.text).joined() ?? ""
     }
 
     // MARK: Helpers
@@ -876,7 +949,7 @@ final class FlowScheduler {
                     } else if Date().timeIntervalSince(last) >= Double(minutes) * 60 {
                         lastFire[node.id] = Date()
                         Task { _ = await engine.start(flow: flow, trigger: "schedule",
-                                                      payload: nil, key: nil) }
+                                                      payload: nil) }
                     }
                 case "trigger.daily":
                     // Fires once when the clock passes HH:mm. First sighting
@@ -894,7 +967,7 @@ final class FlowScheduler {
                     } else if Date() >= target && last < target {
                         lastFire[node.id] = Date()
                         Task { _ = await engine.start(flow: flow, trigger: "schedule",
-                                                      payload: nil, key: nil) }
+                                                      payload: nil) }
                     }
                 case "trigger.watch":
                     let path = ((node.params["path"] ?? "") as NSString).expandingTildeInPath
@@ -908,7 +981,7 @@ final class FlowScheduler {
                             let payload = added.sorted().map { path + "/" + $0 }
                                 .joined(separator: "\n")
                             Task { _ = await engine.start(flow: flow, trigger: "watch",
-                                                          payload: payload, key: nil) }
+                                                          payload: payload) }
                         }
                     }
                     snapshots[node.id] = now
