@@ -14,6 +14,14 @@ import AppKit
 @MainActor
 enum DockIcon {
     static func apply(_ theme: WorldTheme) {
+        // Respect the system icon style: with a Tinted or Clear look the
+        // bundled .icon must stay in charge so the system can re-style it —
+        // a baked full-color override would defeat the user's setting.
+        let style = UserDefaults.standard.string(forKey: "AppleIconAppearanceTheme")
+        if let style, style.lowercased() != "gradient" {
+            NSApp.applicationIconImage = nil
+            return
+        }
         NSApp.applicationIconImage = draw(theme.palette)
     }
 
