@@ -30,12 +30,17 @@ struct MacONApp: App {
                 // Always-dark worlds (neon, cosmos) render the whole UI dark.
                 .preferredColorScheme(worldTheme.prefersDark ? .dark : nil)
                 .task {
+                    // The Dock wears the active world from the first frame.
+                    DockIcon.apply(worldTheme)
                     // Bring the companion server back up if it was on last time.
                     if companion.startsAtLaunch && !companion.isRunning {
                         companion.start(runnerName: ProcessInfo.processInfo.hostName,
                                         runners: { pipelines.pipelines },
                                         pool: pipelines)
                     }
+                }
+                .onChange(of: worldRaw) { _, raw in
+                    DockIcon.apply(WorldTheme(rawValue: raw) ?? .pastel)
                 }
         }
         .windowStyle(.hiddenTitleBar)
