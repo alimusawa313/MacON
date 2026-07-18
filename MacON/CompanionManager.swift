@@ -163,6 +163,8 @@ final class CompanionManager: ObservableObject {
             case "wake":    if self.allowWake { self.power.wake() }
             case "unlock":  if self.allowUnlock { _ = self.power.unlock(password: self.unlockPassword) }
             case "privacy": if self.allowUnlock, !PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.raise() }
+            case "tunnel":  // device can't reach us — force a fresh tunnel URL
+                if self.remoteEnabled { self.tunnel.refreshNow(); self.publishBeacon() }
             default: break
             }
         }

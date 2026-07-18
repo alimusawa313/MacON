@@ -32,6 +32,9 @@ final class TunnelManager: ObservableObject {
     private var process: Process?
     private var stopRequested = false
     private var desiredPort: Int?
+    // Auto-relaunch after an unexpected exit, with growing backoff.
+    private var retryTask: Task<Void, Never>?
+    private var retryDelay: TimeInterval = 3
 
     var publicURL: String? {
         if case .running(let url) = status { return url }
@@ -83,6 +86,7 @@ final class TunnelManager: ObservableObject {
                 let url = String(text[range])
                 Task { @MainActor [weak self] in
                     guard let self, self.process === p else { return }
+                    self.retryDelay = 3                       // healthy again
                     if case .running = self.status {} else { self.status = .running(url) }
                 }
             }
@@ -96,9 +100,10 @@ final class TunnelManager: ObservableObject {
                 if self.stopRequested {
                     self.status = .off
                 } else {
-                    // Unexpected exit (usually the Mac slept). Note it, but let
-                    // the wake handler bring a fresh tunnel back on its own.
-                    self.status = .failed("Tunnel dropped — reconnecting on wake.")
+                    // Unexpected exit (sleep, network blip, cloudflared crash):
+                    // come back on our own — nobody should have to press Retry.
+                    self.status = .failed("Tunnel dropped — restarting…")
+                    self.scheduleRelaunch()
                 }
             }
         }
@@ -111,12 +116,30 @@ final class TunnelManager: ObservableObject {
         }
     }
 
-    /// Force a fresh tunnel (a new public URL). Used after the Mac wakes: the
-    /// old cloudflared may be dead or its edge connection stale, so we tear it
-    /// down and relaunch. The old process's termination is ignored via the
-    /// `process === p` guard, so it can't clobber the new run's status.
+    /// Retry after an unexpected exit: 3s, 6s, 12s… capped at 60s, reset the
+    /// moment a tunnel comes up healthy. Cancelled by stop()/refreshNow().
+    private func scheduleRelaunch() {
+        guard retryTask == nil, !stopRequested, desiredPort != nil else { return }
+        let delay = retryDelay
+        retryDelay = min(retryDelay * 2, 60)
+        retryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self else { return }
+            self.retryTask = nil
+            guard !self.stopRequested, self.process == nil,
+                  let port = self.desiredPort else { return }
+            self.launch(port: port)
+        }
+    }
+
+    /// Force a fresh tunnel (a new public URL) right now — e.g. after the Mac
+    /// wakes, or when the paired device asks over iCloud. The old process's
+    /// termination is ignored via the `process === p` guard, so it can't
+    /// clobber the new run's status.
     func refreshNow() {
         guard let port = desiredPort, !stopRequested else { return }
+        retryTask?.cancel(); retryTask = nil
+        retryDelay = 3
         let old = process
         process = nil
         old?.terminate()
@@ -126,6 +149,7 @@ final class TunnelManager: ObservableObject {
     func stop() {
         stopRequested = true
         desiredPort = nil
+        retryTask?.cancel(); retryTask = nil
         process?.terminate()
         process = nil
         status = .off
