@@ -272,6 +272,13 @@ struct SettingsView: View {
                         + "(zsh) on this Mac in its terminal. VS Code picks edits up "
                         + "instantly.")
             }
+            Toggle("Let paired devices build & run Flows (automations)", isOn: $companion.allowFlows)
+            if companion.allowFlows {
+                caption("Flows are block graphs drawn on the companion and executed "
+                        + "here: AI models, shell commands, files, the clipboard, "
+                        + "notifications and more. Same trust level as Code — a flow "
+                        + "can run anything you could type in a terminal.")
+            }
         } header: { WorldSectionHeader(title: "Companion app", symbol: "ipad.and.iphone", world: world) }
     }
 

@@ -110,6 +110,13 @@ final class CompanionManager: ObservableObject {
         didSet { defaults.set(allowCode, forKey: codeKey) }
     }
 
+    /// Let paired devices build & run Flows (visual automations that execute
+    /// on this Mac). Off by default — flows can run shell commands and
+    /// scripts, so it's the same trust level as Code.
+    @Published var allowFlows: Bool {
+        didSet { defaults.set(allowFlows, forKey: flowsKey) }
+    }
+
     /// The tunnel process/state (UI observes through this manager).
     let tunnel = TunnelManager()
 
@@ -134,9 +141,13 @@ final class CompanionManager: ObservableObject {
     private let iCloudKey = "companion.iCloud"
     private let aiKey = "companion.allowAI"
     private let codeKey = "companion.allowCode"
+    private let flowsKey = "companion.allowFlows"
     private static let unlockAccount = "companion.unlockPassword"
     private let ollama = OllamaService()
     private let terminal = TerminalBridge()
+    private let flowStore = FlowStore()
+    private let flowEngine: FlowEngine
+    private let flowScheduler = FlowScheduler()
     private var tunnelSink: AnyCancellable?
 
     init() {
@@ -150,6 +161,8 @@ final class CompanionManager: ObservableObject {
         iCloudEnabled = defaults.bool(forKey: iCloudKey)   // default off
         allowAI = defaults.bool(forKey: aiKey)             // default off
         allowCode = defaults.bool(forKey: codeKey)         // default off (file access)
+        allowFlows = defaults.bool(forKey: flowsKey)       // default off (runs commands)
+        flowEngine = FlowEngine(store: flowStore)
         devices = store.deviceList()
 
         // Surface CloudLink's published state through this manager.
@@ -350,6 +363,43 @@ final class CompanionManager: ObservableObject {
                 input: { [weak self] id, bytes in self?.terminal.input(id: id, bytes) },
                 resize: { [weak self] id, cols, rows in self?.terminal.resize(id: id, cols: cols, rows: rows) },
                 close: { [weak self] id in self?.terminal.close(id: id) }),
+            flowOps: CompanionServer.FlowOps(
+                list: { [weak self] in
+                    guard let self, await MainActor.run(body: { self.allowFlows }) else { return nil }
+                    return try? CompanionJSON.encoder.encode(FlowsListDTO(flows: self.flowStore.flows))
+                },
+                save: { [weak self] body in
+                    guard let self, await MainActor.run(body: { self.allowFlows }),
+                          let flow = try? CompanionJSON.decoder.decode(Flow.self, from: body)
+                    else { return false }
+                    self.flowStore.upsert(flow)
+                    return true
+                },
+                remove: { [weak self] id in
+                    guard let self, await MainActor.run(body: { self.allowFlows }) else { return false }
+                    return self.flowStore.remove(id: id)
+                },
+                run: { [weak self] id, body in
+                    guard let self, await MainActor.run(body: { self.allowFlows }),
+                          let flow = self.flowStore.flow(id: id) else { return nil }
+                    let req = (try? CompanionJSON.decoder.decode(FlowRunRequest.self, from: body))
+                        ?? FlowRunRequest(payload: nil, key: nil, keys: nil)
+                    let runId = await self.flowEngine.start(flow: flow, trigger: "manual",
+                                                            payload: req.payload, keys: req.allKeys)
+                    return try? CompanionJSON.encoder.encode(FlowRunStartDTO(runId: runId))
+                },
+                runs: { [weak self] id in
+                    guard let self, await MainActor.run(body: { self.allowFlows }) else { return nil }
+                    return try? CompanionJSON.encoder.encode(FlowRunsDTO(runs: self.flowStore.runs(flowId: id)))
+                },
+                runDetail: { [weak self] id in
+                    guard let self, let run = await self.flowEngine.runDetail(id: id) else { return nil }
+                    return try? CompanionJSON.encoder.encode(run)
+                },
+                cancel: { [weak self] id in
+                    guard let self else { return false }
+                    return await self.flowEngine.cancel(id: id)
+                }),
             onLog: { _ in })
         svc.start()
         service = svc
@@ -359,6 +409,11 @@ final class CompanionManager: ObservableObject {
         if store.deviceCount == 0 { newCode() }
         syncTunnel()
         if iCloudEnabled { cloud.start(); publishBeacon() }
+        // Time- and folder-based flow triggers tick while the server runs;
+        // the gate re-checks the toggle so flipping it applies immediately.
+        flowScheduler.start(store: flowStore, engine: flowEngine) { [weak self] in
+            (self?.allowFlows ?? false) && (self?.isRunning ?? false)
+        }
     }
 
     /// Snapshot the current address + status into the iCloud beacon, so a
@@ -403,6 +458,7 @@ final class CompanionManager: ObservableObject {
 
     func stop() {
         tunnel.stop()
+        flowScheduler.stop()
         setScreenCapture(false)
         // Server going away ends any compact session — drop the wall now if
         // it's ours.
