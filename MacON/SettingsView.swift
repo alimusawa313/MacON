@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 import MaconKit
 
@@ -74,6 +75,7 @@ struct SettingsView: View {
             case .accounts:   bitbucketSection; githubSection
             case .secrets:    secretsSection
             case .companion:  companionSection; aiSection
+            case .notifications: notificationsSection
             case .power:      powerSection
             case .privacy:    privacyScreenSection
             case .portable:   portableSection
@@ -290,6 +292,10 @@ struct SettingsView: View {
     }
 
     /// Local AI: let a paired device chat with this Mac's Ollama.
+    private var notificationsSection: some View {
+        NotificationsSettings(push: companion.push, world: world)
+    }
+
     private var aiSection: some View {
         Section {
             caption("Chat with a large language model running locally on this Mac "
@@ -689,46 +695,123 @@ struct SettingsSnapshot {
 
 /// The settings panes, in sidebar order — one focused screen each, the way
 /// System Settings splits things up.
+// MARK: - Notifications settings
+
+/// Build-event pushes to paired devices. The Mac pushes directly via APNs, so
+/// it needs an APNs auth key (.p8) from the Apple Developer portal plus the
+/// Key ID and Team ID. Observes PushManager directly so the status stays live.
+private struct NotificationsSettings: View {
+    @ObservedObject var push: PushManager
+    let world: WorldStyle
+
+    var body: some View {
+        Section {
+            Toggle("Push build alerts to paired devices", isOn: $push.enabled)
+            if push.enabled {
+                Toggle("Also notify when a build starts", isOn: $push.onStart)
+                statusPill
+            }
+        } header: {
+            WorldSectionHeader(title: "Notifications", symbol: "bell.badge.fill",
+                               world: world, tint: world.warm)
+        } footer: {
+            Text("When a pipeline starts, passes or fails, paired devices get a push — even when the companion is closed. The Mac sends it directly through Apple, so it needs an APNs key.")
+        }
+
+        Section {
+            HStack {
+                Text("APNs auth key (.p8)")
+                Spacer()
+                if push.hasKey {
+                    Label("Loaded", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(world.good).font(.caption)
+                }
+                Button(push.hasKey ? "Replace…" : "Import…") { importKey() }
+            }
+            TextField("Key ID (10 chars)", text: $push.keyID)
+                .textFieldStyle(.roundedBorder).autocorrectionDisabled()
+            TextField("Team ID (10 chars)", text: $push.teamID)
+                .textFieldStyle(.roundedBorder).autocorrectionDisabled()
+        } header: {
+            WorldSectionHeader(title: "APNs credentials", symbol: "key.fill",
+                               world: world, tint: world.warm)
+        } footer: {
+            Text("Create a key with the Apple Push Notifications service enabled at developer.apple.com → Keys. The companion's bundle id is the topic.")
+        }
+    }
+
+    @ViewBuilder private var statusPill: some View {
+        if !push.isConfigured {
+            Pill(text: "Add the APNs key below to arm pushes",
+                 systemImage: "exclamationmark.triangle.fill", tint: world.warm)
+        } else if push.registeredCount == 0 {
+            Pill(text: "Ready — no devices have registered yet",
+                 systemImage: "bell.fill", tint: world.primary)
+        } else {
+            Pill(text: "Armed — \(push.registeredCount) device\(push.registeredCount == 1 ? "" : "s") will be notified",
+                 systemImage: "checkmark.circle.fill", tint: world.good)
+        }
+    }
+
+    private func importKey() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "p8") ?? .data, .data]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose your AuthKey_XXXXXXXXXX.p8"
+        guard panel.runModal() == .OK, let url = panel.url,
+              let contents = try? String(contentsOf: url, encoding: .utf8) else { return }
+        push.keyP8 = contents
+        // The file name is AuthKey_<KeyID>.p8 — prefill the Key ID.
+        let base = url.deletingPathExtension().lastPathComponent
+        if push.keyID.isEmpty, base.hasPrefix("AuthKey_") {
+            push.keyID = String(base.dropFirst("AuthKey_".count))
+        }
+    }
+}
+
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case appearance, accounts, secrets, companion, power, privacy, portable, cleanup
+    case appearance, accounts, secrets, companion, notifications, power, privacy, portable, cleanup
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .appearance: return "World"
-        case .accounts:   return "Accounts"
-        case .secrets:    return "Global Secrets"
-        case .companion:  return "Companion"
-        case .power:      return "Power & Access"
-        case .privacy:    return "Privacy Screen"
-        case .portable:   return "Portable Config"
-        case .cleanup:    return "Cleanup"
+        case .appearance:    return "World"
+        case .accounts:      return "Accounts"
+        case .secrets:       return "Global Secrets"
+        case .companion:     return "Companion"
+        case .notifications: return "Notifications"
+        case .power:         return "Power & Access"
+        case .privacy:       return "Privacy Screen"
+        case .portable:      return "Portable Config"
+        case .cleanup:       return "Cleanup"
         }
     }
 
     var symbol: String {
         switch self {
-        case .appearance: return "cube.fill"
-        case .accounts:   return "person.crop.circle.fill"
-        case .secrets:    return "key.fill"
-        case .companion:  return "ipad.and.iphone"
-        case .power:      return "power"
-        case .privacy:    return "hand.raised.fill"
-        case .portable:   return "terminal.fill"
-        case .cleanup:    return "sparkles"
+        case .appearance:    return "cube.fill"
+        case .accounts:      return "person.crop.circle.fill"
+        case .secrets:       return "key.fill"
+        case .companion:     return "ipad.and.iphone"
+        case .notifications: return "bell.badge.fill"
+        case .power:         return "power"
+        case .privacy:       return "hand.raised.fill"
+        case .portable:      return "terminal.fill"
+        case .cleanup:       return "sparkles"
         }
     }
 
     func tint(_ world: WorldStyle) -> Color {
         switch self {
-        case .appearance: return world.primary
-        case .accounts:   return world.warm
-        case .secrets:    return world.warm
-        case .companion:  return world.primary
-        case .power:      return world.good
-        case .privacy:    return world.bad
-        case .portable:   return world.good
-        case .cleanup:    return world.good
+        case .appearance:    return world.primary
+        case .accounts:      return world.warm
+        case .secrets:       return world.warm
+        case .companion:     return world.primary
+        case .notifications: return world.warm
+        case .power:         return world.good
+        case .privacy:       return world.bad
+        case .portable:      return world.good
+        case .cleanup:       return world.good
         }
     }
 }

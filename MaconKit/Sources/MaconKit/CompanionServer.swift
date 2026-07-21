@@ -199,6 +199,12 @@ public final class CompanionServer: @unchecked Sendable {
     private let codeOps: CodeOps?
     private let termOps: TermOps?
     private let flowOps: FlowOps?
+    /// Fleet: the paired devices and their liveness, for the device map.
+    /// Payload is opaque Data (the app owns the shape); nil op = 404.
+    private let devices: (@Sendable () async -> Data?)?
+    /// Push: a device hands the Mac its APNs token so build alerts reach it.
+    /// The bearer token identifies which paired device; body is opaque.
+    private let apnsRegister: (@Sendable (_ bearer: String, _ body: Data) async -> Bool)?
 
     private static let controlDecoder = JSONDecoder()
 
@@ -226,6 +232,8 @@ public final class CompanionServer: @unchecked Sendable {
                 codeOps: CodeOps? = nil,
                 termOps: TermOps? = nil,
                 flowOps: FlowOps? = nil,
+                devices: (@Sendable () async -> Data?)? = nil,
+                apnsRegister: (@Sendable (_ bearer: String, _ body: Data) async -> Bool)? = nil,
                 onLog: @escaping @Sendable (String) -> Void) {
         self.port = NWEndpoint.Port(rawValue: port) ?? 8899
         self.authorize = authorize
@@ -251,6 +259,8 @@ public final class CompanionServer: @unchecked Sendable {
         self.codeOps = codeOps
         self.termOps = termOps
         self.flowOps = flowOps
+        self.devices = devices
+        self.apnsRegister = apnsRegister
         self.onLog = onLog
     }
 
@@ -429,6 +439,28 @@ public final class CompanionServer: @unchecked Sendable {
                 } else {
                     self.respond(conn, "409 Conflict", json: nil)
                 }
+            }
+            return
+        }
+
+        // GET /devices — every paired device + liveness, for the fleet map.
+        if method == "GET", path == "/devices" {
+            guard let devices else { respond(conn, "404 Not Found", json: nil); return }
+            Task {
+                if let data = await devices() {
+                    self.respond(conn, "200 OK", json: data)
+                } else { self.respond(conn, "404 Not Found", json: nil) }
+            }
+            return
+        }
+
+        // POST /apns/register — a device registers its APNs token for build
+        // pushes. The bearer identifies which paired device the token is for.
+        if method == "POST", segs.count == 2, segs[0] == "apns", segs[1] == "register" {
+            guard let apnsRegister else { respond(conn, "404 Not Found", json: nil); return }
+            Task {
+                let ok = await apnsRegister(token, body)
+                self.respond(conn, ok ? "200 OK" : "400 Bad Request", json: nil)
             }
             return
         }

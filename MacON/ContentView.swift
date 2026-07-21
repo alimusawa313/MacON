@@ -66,7 +66,11 @@ struct ContentView: View {
                             .frame(width: 15)
                         Text("Fleet").font(.body.weight(.medium))
                         Spacer()
-                        Pill(text: "Soon", systemImage: "sparkles", tint: world.primary)
+                        if !companion.devices.isEmpty {
+                            Text("\(companion.devices.count)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(.vertical, 3)
                     .tag(SidebarSelection.fleet)

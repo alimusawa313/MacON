@@ -20,6 +20,9 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var pairingCode: String?
     @Published private(set) var devices: [PairingStore.Device] = []
+    /// Last authorized request per device (token prefix → time) — the fleet
+    /// map's liveness. In memory only; resets with the app.
+    @Published private(set) var deviceActivity: [String: Date] = [:]
     /// Whether paired devices may view this Mac's screen.
     @Published var shareScreen: Bool {
         didSet {
@@ -150,6 +153,8 @@ final class CompanionManager: ObservableObject {
     let flowStore = FlowStore()
     let flowEngine: FlowEngine
     private let flowScheduler = FlowScheduler()
+    /// Build-event push notifications to paired devices (exposed for Settings).
+    let push = PushManager()
     private var tunnelSink: AnyCancellable?
 
     init() {
@@ -247,6 +252,8 @@ final class CompanionManager: ObservableObject {
         runnersProvider = runners
         defaults.set(port, forKey: portKey)
         defaults.set(true, forKey: enabledKey)
+        // Every pipeline lifecycle moment becomes a push to paired devices.
+        pool?.onBuildEvent = { [weak self] event in self?.push.fire(event) }
         let svc = CompanionService(
             runners: runners, runnerName: runnerName,
             port: UInt16(clamping: port), store: store,
@@ -402,6 +409,18 @@ final class CompanionManager: ObservableObject {
                     guard let self else { return false }
                     return await self.flowEngine.cancel(id: id)
                 }),
+            devices: { [weak self] in
+                await MainActor.run {
+                    guard let self else { return nil }
+                    return try? CompanionJSON.encoder.encode(self.fleetSnapshot())
+                }
+            },
+            apnsRegister: { [weak self] bearer, body in
+                await MainActor.run { self?.push.register(bearer: bearer, body: body) ?? false }
+            },
+            onAuthorize: { [weak self] token in
+                Task { @MainActor in self?.noteSeen(token) }
+            },
             onLog: { _ in })
         svc.start()
         service = svc
@@ -602,8 +621,45 @@ final class CompanionManager: ObservableObject {
 
     func refreshDevices() { devices = store.deviceList() }
 
+    // MARK: Fleet (device map)
+
+    /// A device just made an authorized request. Throttled — the screen
+    /// stream and poll loops would otherwise publish every few hundred ms.
+    private func noteSeen(_ token: String) {
+        let short = String(token.prefix(8))
+        let last = deviceActivity[short] ?? .distantPast
+        guard Date().timeIntervalSince(last) > 2 else { return }
+        deviceActivity[short] = Date()
+    }
+
+    /// This Mac + every paired device with its liveness — the fleet map's
+    /// data, served over /devices and read directly by the Mac's FleetView.
+    func fleetSnapshot() -> FleetDevicesDTO {
+        let now = Date()
+        let list = store.deviceList().map { device -> FleetDeviceDTO in
+            let seen = deviceActivity[device.tokenShort]
+            let seconds = seen.map { Int(now.timeIntervalSince($0)) }
+            return FleetDeviceDTO(
+                name: device.name,
+                kind: device.name.lowercased().contains("ipad") ? "ipad" : "iphone",
+                seconds: seconds,
+                live: (seconds ?? .max) < 15,
+                short: device.tokenShort,
+                pairedAt: device.pairedAt)
+        }
+        return FleetDevicesDTO(mac: host, devices: list)
+    }
+
+    /// Revoke by the fleet map's stable id (the token prefix).
+    func revoke(short: String) {
+        store.revoke(prefix: short)
+        push.unregister(short: short)
+        refreshDevices()
+    }
+
     func revoke(_ device: PairingStore.Device) {
         store.revoke(prefix: device.token)
+        push.unregister(short: device.tokenShort)
         refreshDevices()
     }
 }
