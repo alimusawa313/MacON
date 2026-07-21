@@ -78,6 +78,18 @@ struct ContentView: View {
             }
             .navigationSplitViewColumnWidth(min: 250, ideal: 280)
             .safeAreaInset(edge: .bottom) { poolBar }
+            .toolbar {
+                // Home: clear the selection to land back on the welcome pane.
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        selection = nil
+                    } label: {
+                        Image(systemName: "house.fill")
+                    }
+                    .help("Home")
+                    .disabled(selection == nil)
+                }
+            }
         } detail: {
             detail
         }
