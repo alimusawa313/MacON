@@ -153,6 +153,8 @@ final class CompanionManager: ObservableObject {
     let flowStore = FlowStore()
     let flowEngine: FlowEngine
     private let flowScheduler = FlowScheduler()
+    /// Build-event push notifications to paired devices (exposed for Settings).
+    let push = PushManager()
     private var tunnelSink: AnyCancellable?
 
     init() {
@@ -250,6 +252,8 @@ final class CompanionManager: ObservableObject {
         runnersProvider = runners
         defaults.set(port, forKey: portKey)
         defaults.set(true, forKey: enabledKey)
+        // Every pipeline lifecycle moment becomes a push to paired devices.
+        pool?.onBuildEvent = { [weak self] event in self?.push.fire(event) }
         let svc = CompanionService(
             runners: runners, runnerName: runnerName,
             port: UInt16(clamping: port), store: store,
@@ -410,6 +414,9 @@ final class CompanionManager: ObservableObject {
                     guard let self else { return nil }
                     return try? CompanionJSON.encoder.encode(self.fleetSnapshot())
                 }
+            },
+            apnsRegister: { [weak self] bearer, body in
+                await MainActor.run { self?.push.register(bearer: bearer, body: body) ?? false }
             },
             onAuthorize: { [weak self] token in
                 Task { @MainActor in self?.noteSeen(token) }
@@ -646,11 +653,13 @@ final class CompanionManager: ObservableObject {
     /// Revoke by the fleet map's stable id (the token prefix).
     func revoke(short: String) {
         store.revoke(prefix: short)
+        push.unregister(short: short)
         refreshDevices()
     }
 
     func revoke(_ device: PairingStore.Device) {
         store.revoke(prefix: device.token)
+        push.unregister(short: device.tokenShort)
         refreshDevices()
     }
 }
