@@ -12,12 +12,18 @@
 import Foundation
 
 nonisolated struct FleetDeviceDTO: Codable, Identifiable, Hashable {
-    var name: String
+    var name: String               // full detailed name, e.g. "iPhone 17 Pro · iOS 26.5 · a1b2"
     var kind: String               // "iphone" | "ipad"
     var seconds: Int?              // since last seen; nil = quiet since launch
     var live: Bool
     var short: String              // token prefix — stable id, revoke handle
+    var pairedAt: Date
     var id: String { short }
+
+    /// The short label a card shows: the model, before the OS/tag suffixes.
+    var label: String {
+        name.components(separatedBy: " · ").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? name
+    }
 }
 
 nonisolated struct FleetDevicesDTO: Codable {

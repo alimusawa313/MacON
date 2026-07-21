@@ -20,6 +20,7 @@ struct FleetView: View {
     @State private var dragOrigin: (id: String, at: CGPoint)?
     @State private var ropes = RopeBox()
     @State private var viewSize: CGSize = .zero
+    @State private var detail: FleetDeviceDTO?
 
     private static let macKey = "@mac"
     private static let macW: CGFloat = 220, macH: CGFloat = 86
@@ -43,10 +44,19 @@ struct FleetView: View {
                     deviceCard(device)
                         .position(positions[device.short] ?? center(geo.size))
                         .gesture(cardDrag(device.short))
+                        .onTapGesture { detail = device }
+                        .popover(isPresented: Binding(
+                            get: { detail?.short == device.short },
+                            set: { if !$0 { detail = nil } })) {
+                            FleetDeviceDetail(device: device, world: world) {
+                                companion.revoke(short: device.short)
+                                detail = nil
+                            }
+                        }
                         .contextMenu {
                             Button(role: .destructive) {
                                 companion.revoke(short: device.short)
-                            } label: { Label("Unpair \(device.name)", systemImage: "trash") }
+                            } label: { Label("Unpair \(device.label)", systemImage: "trash") }
                         }
                 }
 
@@ -197,7 +207,7 @@ struct FleetView: View {
                 .background(device.live ? world.good : Color(nsColor: world.box.slate),
                             in: RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 2) {
-                Text(device.name)
+                Text(device.label)
                     .font(.system(.subheadline, design: .rounded).weight(.bold))
                     .foregroundStyle(world.ink)
                     .lineLimit(1)
@@ -241,5 +251,66 @@ struct FleetView: View {
         }
         .offset(y: 120)
         .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Device detail (popover)
+
+private struct FleetDeviceDetail: View {
+    let device: FleetDeviceDTO
+    let world: WorldStyle
+    let onUnpair: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 11) {
+                Image(systemName: device.kind == "ipad" ? "ipad" : "iphone")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(device.live ? world.good : world.primary,
+                                in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(device.label)
+                        .font(.system(.title3, design: .rounded).weight(.bold))
+                    Text(device.live ? "Connected now" : "Not connected")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(device.live ? world.good : .secondary)
+                }
+            }
+            Divider()
+            row("Full name", device.name)
+            row("Type", device.kind == "ipad" ? "iPad" : "iPhone")
+            row("Last seen", lastSeen)
+            row("Paired", device.pairedAt.formatted(date: .abbreviated, time: .shortened))
+            row("Token", device.short, mono: true)
+            Divider()
+            Button(role: .destructive, action: onUnpair) {
+                Label("Unpair this device", systemImage: "trash")
+            }
+        }
+        .padding(18)
+        .frame(width: 320)
+    }
+
+    private var lastSeen: String {
+        if device.live { return "Now" }
+        guard let s = device.seconds else { return "Quiet since launch" }
+        if s < 60 { return "\(s)s ago" }
+        if s < 3600 { return "\(s / 60)m ago" }
+        return "\(s / 3600)h ago"
+    }
+
+    private func row(_ label: String, _ value: String, mono: Bool = false) -> some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 16)
+            Text(value)
+                .font(.system(.footnote, design: mono ? .monospaced : .rounded))
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
     }
 }

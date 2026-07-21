@@ -637,7 +637,8 @@ final class CompanionManager: ObservableObject {
                 kind: device.name.lowercased().contains("ipad") ? "ipad" : "iphone",
                 seconds: seconds,
                 live: (seconds ?? .max) < 15,
-                short: device.tokenShort)
+                short: device.tokenShort,
+                pairedAt: device.pairedAt)
         }
         return FleetDevicesDTO(mac: host, devices: list)
     }
