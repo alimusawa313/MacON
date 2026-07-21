@@ -80,7 +80,10 @@ final class TunnelManager: ObservableObject {
         p.standardError = pipe
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            // EOF: clear the handler or the system re-invokes it forever —
+            // an empty-data return here spins a core per dead tunnel.
+            guard !data.isEmpty else { handle.readabilityHandler = nil; return }
+            guard let text = String(data: data, encoding: .utf8) else { return }
             if let range = text.range(of: #"https://[a-z0-9-]+\.trycloudflare\.com"#,
                                       options: .regularExpression) {
                 let url = String(text[range])
@@ -93,9 +96,11 @@ final class TunnelManager: ObservableObject {
         }
 
         p.terminationHandler = { [weak self] proc in
+            // Always release the pipe — a superseded process (refreshNow
+            // kills the old tunnel) must not leave its handler installed.
+            pipe.fileHandleForReading.readabilityHandler = nil
             Task { @MainActor [weak self] in
                 guard let self, self.process === p else { return }   // ignore a superseded process
-                pipe.fileHandleForReading.readabilityHandler = nil
                 self.process = nil
                 if self.stopRequested {
                     self.status = .off
