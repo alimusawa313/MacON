@@ -323,10 +323,13 @@ final class CompanionManager: ObservableObject {
                     return self.power.unlock(password: self.unlockPassword)
                 }
             },
-            privacy: { [weak self] in
+            privacy: { on in
+                // Universal screen blocker — a paired, authed device can raise
+                // or lower the curtain over the Mac's screen. Returns the state.
                 await MainActor.run {
-                    guard let self, self.allowUnlock else { return }
-                    if !PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.raise() }
+                    if on { if !PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.raise() } }
+                    else  { if PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.lower() } }
+                    return PrivacyCurtain.shared.isUp
                 }
             },
             aiModels: { [weak self] in
@@ -488,7 +491,8 @@ final class CompanionManager: ObservableObject {
             canWake: allowWake,
             canUnlock: allowUnlock && hasUnlockPassword,
             mac: net.mac,
-            broadcast: net.broadcast)
+            broadcast: net.broadcast,
+            privacyUp: PrivacyCurtain.shared.isUp)
     }
 
     private static let powerUnavailable = CompanionPowerDTO(
