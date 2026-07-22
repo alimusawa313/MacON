@@ -112,7 +112,14 @@ final class AgentRunner {
         var stepsTaken = 0
         var replans = 0
         var index = 0
+        var rounds = 0                       // completion re-plans (multi-phase tasks)
+        let maxRounds = 8
 
+        // Outer loop: run the plan, then check the TASK is actually done. If the
+        // first plan could only see as far as (say) navigation, this re-reads
+        // the now-visible UI and plans the next phase — repeating until the
+        // model confirms completion or a budget runs out.
+        planLoop: while true {
         while index < plan.steps.count {
             if run.stopped || Task.isCancelled { return }
             if stepsTaken >= maxSteps {
@@ -184,8 +191,41 @@ final class AgentRunner {
             index += 1
         }
 
-        if !run.stopped {
+        // Planned steps ran out — but is the TASK complete? Ask, against the
+        // UI that's on screen NOW (which the first plan couldn't see).
+        if run.stopped || Task.isCancelled { return }
+        rounds += 1
+        if rounds > maxRounds {
+            emit(run, kind: "done", text: "Stopped after \(maxRounds) planning rounds — \(done.count) steps.")
+            return
+        }
+        if stepsTaken >= maxSteps {
+            emit(run, kind: "error", text: "Hit the \(maxSteps)-step limit — stopping."); return
+        }
+
+        emit(run, kind: "plan", text: "Checking the task is complete…")
+        snap = AXSnapshotter.snapshot()
+        let assessment: AgentPlan
+        do {
+            assessment = try await AgentBrain.assess(
+                task: task,
+                snapshot: AXSnapshotter.promptText(app: snap.app, window: snap.window, nodes: snap.nodes),
+                done: done, config: config)
+        } catch {
+            emit(run, kind: "error", text: error.localizedDescription); return
+        }
+
+        if assessment.complete == true || assessment.steps.isEmpty {
             emit(run, kind: "done", text: "Done — \(done.count) step\(done.count == 1 ? "" : "s").")
+            return
+        }
+
+        // More to do: adopt the next-phase plan and keep going.
+        emit(run, kind: "replan", text: "Not done yet — continuing.")
+        announce(run, assessment)
+        plan = assessment
+        index = 0
+        continue planLoop
         }
     }
 

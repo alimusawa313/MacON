@@ -28,6 +28,8 @@ struct AgentStep: Codable {
 struct AgentPlan: Codable {
     var steps: [AgentStep]
     var note: String?
+    /// Set by the completion check: true = the task is fully accomplished.
+    var complete: Bool?
 }
 
 struct AgentBrainConfig {
@@ -78,6 +80,10 @@ enum AgentBrain {
       "return" step when it should submit.
     - Keep plans short and concrete. If the app you need isn't frontmost,
       "launch" it first, then a "wait" of 1–2 s.
+    - Plan only as far as the CURRENT UI lets you see; after those steps run
+      you'll be shown the new screen and asked for the rest. When asked whether
+      the task is complete, reply {"complete":true} only if EVERY part of it
+      (including any "then …") is actually done — otherwise return more steps.
     """
 
     /// Plan a fresh task against the current snapshot.
@@ -109,6 +115,34 @@ enum AgentBrain {
         already complete, reply {"steps":[],"note":"done"}.
         """
         return try await requestPlan(prompt: prompt, config: config)
+    }
+
+    /// After a plan's steps run out, decide whether the TASK is actually done
+    /// against the current UI — and if not, return the steps to finish it. This
+    /// is what carries a multi-phase task ("open Instagram THEN search …") past
+    /// the point where the first plan could only see as far as navigation.
+    static func assess(task: String, snapshot: String, done: [String],
+                       config: AgentBrainConfig) async throws -> AgentPlan {
+        let prompt = """
+        TASK: \(task)
+
+        Steps completed so far:
+        \(done.isEmpty ? "(none)" : done.map { "- \($0)" }.joined(separator: "\n"))
+
+        The planned steps are finished. Based ONLY on the CURRENT UI below,
+        decide whether the TASK is now FULLY accomplished — every part of it,
+        including any "then …" that needed UI which only appeared after earlier
+        steps.
+        - If it IS fully complete, reply {"complete":true}.
+        - If NOT, reply with the REMAINING steps to finish it: {"steps":[...]}.
+
+        CURRENT UI (fresh):
+        \(snapshot)
+        """
+        let raw = try await complete(system: system, prompt: prompt, config: config)
+        // A bare {"complete":true} has no steps — treat parse failure as "more
+        // work unknown" rather than silently finishing.
+        return parsePlan(raw) ?? AgentPlan(steps: [], note: raw, complete: nil)
     }
 
     private static func requestPlan(prompt: String, config: AgentBrainConfig) async throws -> AgentPlan {
