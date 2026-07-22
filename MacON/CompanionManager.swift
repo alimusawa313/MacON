@@ -128,6 +128,11 @@ final class CompanionManager: ObservableObject {
     private let broadcaster = ScreenBroadcaster()
     private var streamer: ScreenStreamer?
     private let remote = RemoteControl()
+    /// The dictate-to-drive agent. Lazily built so it captures `self` for the
+    /// control gate. A task is remote control, so it rides the same toggle.
+    private lazy var agent = AgentRunner(remote: remote, allowControl: { [weak self] in
+        self?.allowControl ?? false
+    })
     private let power = PowerManager()
     private let cloud = CloudLink()
     private var runnersProvider: (() -> [PipelineRunner])?
@@ -418,6 +423,19 @@ final class CompanionManager: ObservableObject {
             apnsRegister: { [weak self] bearer, body in
                 await MainActor.run { self?.push.register(bearer: bearer, body: body) ?? false }
             },
+            agentOps: CompanionServer.AgentOps(
+                start: { [weak self] req in
+                    await MainActor.run { self?.agent.start(req) }
+                },
+                eventsSince: { [weak self] id, after in
+                    await MainActor.run { self?.agent.eventsSince(id, after: after) ?? [] }
+                },
+                stop: { [weak self] id in
+                    await MainActor.run { self?.agent.stop(id) ?? false }
+                },
+                decision: { [weak self] id, seq, approve in
+                    await MainActor.run { self?.agent.decision(id, seq: seq, approve: approve) ?? false }
+                }),
             onAuthorize: { [weak self] token in
                 Task { @MainActor in self?.noteSeen(token) }
             },
