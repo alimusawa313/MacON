@@ -50,6 +50,9 @@ final class RemoteControl {
             if let s = e.s { type(s) }
         case "key":
             if let code = e.code { key(CGKeyCode(code), down: e.down ?? true) }
+        case "keyreset":
+            // Hardware session ended — drop any modifier still marked held.
+            releaseHeldModifiers()
         case "launch":
             // Open (or focus) a Mac app by its .app path — the shortcut deck.
             if let path = e.s { launchApp(path: path) }
@@ -249,9 +252,42 @@ final class RemoteControl {
         ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`",
     ]
 
+    /// Live modifier state for raw hardware-keyboard passthrough: the iPad's
+    /// Magic Keyboard forwards every key as its own down/up (including ⌘⇧⌃⌥),
+    /// so we track which modifiers are held and stamp the resulting flags on
+    /// EVERY key event. That's what makes ⌘-then-C fire ⌘C, and — because we
+    /// hold the physical key down until its up event — lets macOS do its own
+    /// key-repeat naturally.
+    private var liveModFlags: CGEventFlags = []
+
     private func key(_ code: CGKeyCode, down: Bool) {
-        CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.post(tap: .cghidEventTap)
+        if let flag = Self.modifierFlag(for: code) {
+            if down { liveModFlags.insert(flag) } else { liveModFlags.remove(flag) }
+        }
+        let src = CGEventSource(stateID: .hidSystemState)
+        let ev = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
+        var flags = liveModFlags
+        // Arrow keys carry the Fn/NumPad flags real hardware sends.
+        if (123...126).contains(code) { flags.insert(.maskSecondaryFn); flags.insert(.maskNumericPad) }
+        ev?.flags = flags
+        ev?.post(tap: .cghidEventTap)
     }
+
+    /// The flag a modifier virtual-keycode contributes (nil for normal keys).
+    private static func modifierFlag(for code: CGKeyCode) -> CGEventFlags? {
+        switch code {
+        case 55, 54: return .maskCommand      // ⌘ left / right
+        case 56, 60: return .maskShift        // ⇧ left / right
+        case 59, 62: return .maskControl      // ⌃ left / right
+        case 58, 61: return .maskAlternate    // ⌥ left / right
+        case 63:     return .maskSecondaryFn  // fn / globe
+        default:     return nil
+        }
+    }
+
+    /// Release any stuck modifiers (called when the hardware session ends, so a
+    /// modifier whose key-up never arrived can't poison later input).
+    func releaseHeldModifiers() { liveModFlags = [] }
 
     /// Trigger Mission Control by launching its app — reliable regardless of
     /// how the system treats synthetic keyboard chords.
