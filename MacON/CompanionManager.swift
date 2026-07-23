@@ -654,10 +654,18 @@ final class CompanionManager: ObservableObject {
         guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return false }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return false }
-        let virtual = virtualDisplay.displayID
-        return ids.prefix(Int(count)).contains {
-            $0 != virtual && CGDisplayIsActive($0) != 0 && CGDisplayIsAsleep($0) == 0
+        return ids.prefix(Int(count)).contains { id in
+            !isOwnVirtualDisplay(id) && CGDisplayIsActive(id) != 0 && CGDisplayIsAsleep(id) == 0
         }
+    }
+
+    /// Recognize a MacON virtual display — including one just torn down that's
+    /// still lingering in the display list — by the identifiers we stamp on it,
+    /// so a leftover isn't counted as a real monitor.
+    private func isOwnVirtualDisplay(_ id: CGDirectDisplayID) -> Bool {
+        id == virtualDisplay.displayID
+            || (CGDisplayVendorNumber(id) == VirtualDisplayHost.vendorID
+                && CGDisplayModelNumber(id) == VirtualDisplayHost.productID)
     }
 
     /// Ensure there's *something* to capture while viewing: if the lid's shut

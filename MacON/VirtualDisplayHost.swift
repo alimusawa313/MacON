@@ -18,6 +18,12 @@ import CoreGraphics
 
 @MainActor
 final class VirtualDisplayHost {
+    /// Identifiers we stamp on our virtual display so it can be recognized in
+    /// the display list — even a just-torn-down one that still lingers there —
+    /// and never mistaken for a real monitor.
+    static let vendorID: UInt32 = 0x6D63    // "mc"
+    static let productID: UInt32 = 0x4F4E   // "ON"
+
     /// Retaining the CGVirtualDisplay keeps the display alive; releasing it
     /// (setting nil) removes the display.
     private var display: CGVirtualDisplay?
@@ -37,8 +43,8 @@ final class VirtualDisplayHost {
         descriptor.name = "MacON Display"
         // Stable, arbitrary identifiers so macOS treats it as one consistent
         // display across create/destroy cycles.
-        descriptor.vendorID = 0x6D63       // "mc"
-        descriptor.productID = 0x4F4E      // "ON"
+        descriptor.vendorID = Self.vendorID
+        descriptor.productID = Self.productID
         descriptor.serialNum = 0x0001
         descriptor.maxPixelsWide = UInt32(width)
         descriptor.maxPixelsHigh = UInt32(height)
@@ -67,8 +73,25 @@ final class VirtualDisplayHost {
         }
         self.display = display
         self.displayID = display.displayID
+        makeMain(display.displayID)
         NSLog("MacOn: virtual display up — id \(display.displayID) (\(width)×\(height))")
         return display.displayID
+    }
+
+    /// Move the virtual display to the global origin (0,0), i.e. make it the
+    /// *main* display. Without this, macOS keeps a lid-shut/asleep internal
+    /// panel as main and renders the desktop + login window there — so the
+    /// virtual display captures only blank/idle frames and the stream never
+    /// starts. Making it main puts the actual UI onto the surface we capture.
+    private func makeMain(_ id: CGDirectDisplayID) {
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success, let config else {
+            NSLog("MacOn: begin display config failed — virtual display not promoted to main")
+            return
+        }
+        CGConfigureDisplayOrigin(config, id, 0, 0)
+        let err = CGCompleteDisplayConfiguration(config, .forSession)
+        NSLog("MacOn: promote virtual display to main → \(err == .success ? "ok" : "err \(err.rawValue)")")
     }
 
     /// Tear the virtual display back down (releasing the object removes it).
