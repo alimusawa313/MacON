@@ -480,6 +480,12 @@ final class CompanionManager: ObservableObject {
                 decision: { [weak self] id, seq, approve in
                     await MainActor.run { self?.agent.decision(id, seq: seq, approve: approve) ?? false }
                 }),
+            voiceTurn: { req in
+                await VoiceAgent.turn(req)
+            },
+            voiceTTS: { text in
+                await PiperTTS.synthesize(text)
+            },
             onAuthorize: { [weak self] token in
                 Task { @MainActor in self?.noteSeen(token) }
             },

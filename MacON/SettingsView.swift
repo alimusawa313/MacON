@@ -28,6 +28,8 @@ struct SettingsView: View {
     @State private var aiChecked = false
     @State private var aiModelCount: Int?              // nil once checked → Ollama unreachable
     @State private var customProviders: [CustomAIProvider] = []
+    @AppStorage(PiperTTS.binaryKey) private var piperPath = ""
+    @AppStorage(PiperTTS.voiceKey) private var piperVoice = ""
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
 
@@ -79,7 +81,7 @@ struct SettingsView: View {
             case .appearance: appearanceSection
             case .accounts:   bitbucketSection; githubSection
             case .secrets:    secretsSection
-            case .companion:  companionSection; aiProvidersSection; aiSection
+            case .companion:  companionSection; aiProvidersSection; aiSection; voiceSection
             case .notifications: notificationsSection
             case .power:      powerSection
             case .privacy:    privacyScreenSection
@@ -422,6 +424,41 @@ struct SettingsView: View {
                     .buttonStyle(ClaySoftButtonStyle(world: world))
                 Spacer()
             }
+        }
+    }
+
+    private var voiceSection: some View {
+        Section {
+            caption("Voice mode on the companion talks to an AI agent that sees "
+                    + "and drives this Mac. Replies are spoken with Piper — free, "
+                    + "open-source TTS that runs entirely on this Mac. Install it "
+                    + "from github.com/rhasspy/piper (binary + a voice .onnx), "
+                    + "then point these at them. Without Piper the device falls "
+                    + "back to its own system voice.")
+            HStack {
+                Text("Piper binary")
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                    .frame(width: 110, alignment: .leading)
+                TextField("/opt/homebrew/bin/piper (auto-detected if empty)", text: $piperPath)
+                    .textFieldStyle(.roundedBorder)
+            }
+            HStack {
+                Text("Voice model")
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                    .frame(width: 110, alignment: .leading)
+                TextField("~/piper/en_US-lessac-medium.onnx (auto-detected if empty)", text: $piperVoice)
+                    .textFieldStyle(.roundedBorder)
+            }
+            if PiperTTS.isAvailable {
+                Pill(text: "Piper ready — replies use the open-source voice",
+                     systemImage: "waveform", tint: world.good)
+            } else {
+                Pill(text: "Piper not found — the device will use its system voice",
+                     systemImage: "waveform.slash", tint: world.warm)
+            }
+        } header: {
+            WorldSectionHeader(title: "Voice mode", symbol: "waveform.circle.fill",
+                               world: world, tint: world.primary)
         }
     }
 
