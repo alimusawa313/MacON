@@ -323,6 +323,10 @@ actor FlowEngine {
             return ["out": try await geminiChat(
                 model: param("model", "gemini-2.5-flash"), system: param("system"),
                 prompt: fill(param("prompt", "{{input}}")))]
+        case "ai.devops":
+            return ["out": try await devopsChat(
+                model: param("model", "claude-haiku"), system: param("system"),
+                prompt: fill(param("prompt", "{{input}}")))]
         case "ai.summarize":
             let length = param("length", "short")
             return ["out": try await ollamaChat(
@@ -795,7 +799,22 @@ actor FlowEngine {
     }
 
     private func openaiChat(model: String, system: String, prompt: String) async throws -> String {
-        let key = try cloudKey("openai", label: "OpenAI")
+        try await openAICompatChat(base: "https://api.openai.com/v1/chat/completions",
+                                   provider: "openai", label: "OpenAI",
+                                   model: model, system: system, prompt: prompt)
+    }
+
+    /// DevOps Institute learner gateway — OpenAI-compatible at a custom base URL.
+    private func devopsChat(model: String, system: String, prompt: String) async throws -> String {
+        try await openAICompatChat(base: CloudAI.devopsBase,
+                                   provider: "devops", label: "DevOps Institute",
+                                   model: model, system: system, prompt: prompt)
+    }
+
+    /// Shared OpenAI-style chat call — OpenAI itself and any compatible gateway.
+    private func openAICompatChat(base: String, provider: String, label: String,
+                                  model: String, system: String, prompt: String) async throws -> String {
+        let key = try cloudKey(provider, label: label)
         struct Msg: Codable { let role: String; let content: String }
         struct Req: Encodable { let model: String; let messages: [Msg] }
         struct Resp: Decodable {
@@ -804,7 +823,7 @@ actor FlowEngine {
             let choices: [Choice]?
             let error: Err?
         }
-        var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        var req = URLRequest(url: URL(string: base)!)
         req.httpMethod = "POST"
         req.timeoutInterval = 300
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -815,7 +834,7 @@ actor FlowEngine {
         req.httpBody = try JSONEncoder().encode(Req(model: model, messages: messages))
         let (data, _) = try await URLSession.shared.data(for: req)
         let resp = try JSONDecoder().decode(Resp.self, from: data)
-        if let message = resp.error?.message { throw Fail("OpenAI: \(message)") }
+        if let message = resp.error?.message { throw Fail("\(label): \(message)") }
         return resp.choices?.first?.message?.content ?? ""
     }
 

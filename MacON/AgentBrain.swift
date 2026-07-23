@@ -43,6 +43,7 @@ struct AgentBrainConfig {
         case "openai": return "gpt-4o-mini"
         case "gemini": return "gemini-2.0-flash"
         case "ollama": return "llama3.2"
+        case "devops": return "claude-haiku"
         default:       return "claude-sonnet-5"
         }
     }
@@ -168,6 +169,7 @@ enum AgentBrain {
         case "openai": return try await openai(system: system, prompt: prompt, config: config)
         case "gemini": return try await gemini(system: system, prompt: prompt, config: config)
         case "ollama": return try await ollama(system: system, prompt: prompt, config: config)
+        case "devops": return try await devops(system: system, prompt: prompt, config: config)
         default:       return try await anthropic(system: system, prompt: prompt, config: config)
         }
     }
@@ -207,6 +209,24 @@ enum AgentBrain {
 
     private static func openai(system: String, prompt: String, config: AgentBrainConfig) async throws -> String {
         let key = try cloudKey(config, label: "OpenAI")
+        return try await openAICompatible(base: "https://api.openai.com/v1/chat/completions",
+                                           key: key, label: "OpenAI",
+                                           system: system, prompt: prompt, model: config.resolvedModel)
+    }
+
+    /// DevOps Institute learner API — OpenAI-compatible at a custom base URL.
+    private static func devops(system: String, prompt: String, config: AgentBrainConfig) async throws -> String {
+        let key = try cloudKey(config, label: "DevOps Institute")
+        return try await openAICompatible(base: CloudAI.devopsBase,
+                                           key: key, label: "DevOps Institute",
+                                           system: system, prompt: prompt, model: config.resolvedModel)
+    }
+
+    /// Shared OpenAI-style `/chat/completions` call — used by OpenAI itself and
+    /// any OpenAI-compatible gateway (e.g. the DevOps Institute endpoint), which
+    /// differ only by base URL, model names, and the bearer key.
+    private static func openAICompatible(base: String, key: String, label: String,
+                                         system: String, prompt: String, model: String) async throws -> String {
         struct Msg: Codable { let role: String; let content: String }
         struct Req: Encodable { let model: String; let messages: [Msg] }
         struct Resp: Decodable {
@@ -215,16 +235,16 @@ enum AgentBrain {
             let choices: [Choice]?
             let error: Err?
         }
-        var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        var req = URLRequest(url: URL(string: base)!)
         req.httpMethod = "POST"
         req.timeoutInterval = 120
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(Req(model: config.resolvedModel, messages: [
+        req.httpBody = try JSONEncoder().encode(Req(model: model, messages: [
             Msg(role: "system", content: system), Msg(role: "user", content: prompt)]))
         let (data, _) = try await URLSession.shared.data(for: req)
         let resp = try JSONDecoder().decode(Resp.self, from: data)
-        if let message = resp.error?.message { throw Fail("OpenAI: \(message)") }
+        if let message = resp.error?.message { throw Fail("\(label): \(message)") }
         return resp.choices?.first?.message?.content ?? ""
     }
 

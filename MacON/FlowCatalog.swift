@@ -32,6 +32,14 @@ enum CloudAI {
         ("gemini-2.5-pro", "Gemini 2.5 Pro"),
         ("gemini-2.5-flash", "Gemini 2.5 Flash"),
     ]
+    /// DevOps Institute learner API (OpenAI-compatible gateway to Claude).
+    static let devopsModels: [(id: String, label: String)] = [
+        ("claude-haiku", "Institute · Haiku"),
+        ("claude-sonnet", "Institute · Sonnet"),
+        ("claude-opus", "Institute · Opus"),
+    ]
+    /// OpenAI-compatible chat/completions endpoint for the learner gateway.
+    static let devopsBase = "https://llm.devopsinstitute.id/v1/chat/completions"
 
     static var claudeKey: String {
         get { Keychain.get(account: "flows.anthropicKey") }
@@ -45,6 +53,10 @@ enum CloudAI {
         get { Keychain.get(account: "flows.geminiKey") }
         set { Keychain.set(newValue, account: "flows.geminiKey") }
     }
+    static var devopsKey: String {
+        get { Keychain.get(account: "flows.devopsKey") }
+        set { Keychain.set(newValue, account: "flows.devopsKey") }
+    }
 
     /// Provider → key for the blocks this graph actually uses.
     static func keys(for flow: Flow) -> [String: String] {
@@ -55,6 +67,7 @@ enum CloudAI {
         if flow.nodes.contains(where: { $0.type == "ai.claude" }) { put("anthropic", claudeKey) }
         if flow.nodes.contains(where: { $0.type == "ai.openai" }) { put("openai", openaiKey) }
         if flow.nodes.contains(where: { $0.type == "ai.gemini" }) { put("gemini", geminiKey) }
+        if flow.nodes.contains(where: { $0.type == "ai.devops" }) { put("devops", devopsKey) }
         return out
     }
 }
@@ -114,9 +127,10 @@ struct BlockParam: Identifiable {
         case pick([String])
         case localModel            // installed Ollama models
         case visionModel           // only vision-capable local models
-        case claudeModel           // Claude picker (+ key field)
-        case openaiModel           // GPT picker (+ key field)
-        case geminiModel           // Gemini picker (+ key field)
+        case claudeModel           // Claude picker (key on the Mac)
+        case openaiModel           // GPT picker (key on the Mac)
+        case geminiModel           // Gemini picker (key on the Mac)
+        case devopsModel           // DevOps Institute picker (key on the Mac)
     }
     let key: String                // single-word lowercase
     let label: String
@@ -221,6 +235,15 @@ struct BlockSpec: Identifiable {
                   category: .ai, symbol: "diamond.fill",
                   params: [BlockParam(key: "model", label: "Model", kind: .geminiModel,
                                       fallback: "gemini-2.5-flash"),
+                           BlockParam(key: "system", label: "System prompt", kind: .multiline,
+                                      placeholder: "Optional behavior instructions"),
+                           BlockParam(key: "prompt", label: "Prompt", kind: .multiline,
+                                      fallback: "{{input}}", placeholder: templateHint)]),
+        BlockSpec(type: "ai.devops", title: "DevOps Institute",
+                  blurb: "Claude via the learner gateway",
+                  category: .ai, symbol: "graduationcap.fill",
+                  params: [BlockParam(key: "model", label: "Model", kind: .devopsModel,
+                                      fallback: "claude-haiku"),
                            BlockParam(key: "system", label: "System prompt", kind: .multiline,
                                       placeholder: "Optional behavior instructions"),
                            BlockParam(key: "prompt", label: "Prompt", kind: .multiline,
@@ -514,6 +537,7 @@ struct BlockSpec: Identifiable {
         case "ai.claude":         return v("model") ?? "claude-sonnet-5"
         case "ai.openai":         return v("model") ?? "gpt-5.1"
         case "ai.gemini":         return v("model") ?? "gemini-2.5-flash"
+        case "ai.devops":         return v("model") ?? "claude-haiku"
         case "ai.rewrite":        return v("style") ?? blurb
         case "sys.shell":         return v("command")?.components(separatedBy: .newlines).first ?? blurb
         case "sys.volume":        return "\(v("level") ?? "50")%"

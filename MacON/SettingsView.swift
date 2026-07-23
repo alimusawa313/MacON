@@ -78,7 +78,7 @@ struct SettingsView: View {
             case .appearance: appearanceSection
             case .accounts:   bitbucketSection; githubSection
             case .secrets:    secretsSection
-            case .companion:  companionSection; aiSection
+            case .companion:  companionSection; aiProvidersSection; aiSection
             case .notifications: notificationsSection
             case .power:      powerSection
             case .privacy:    privacyScreenSection
@@ -298,6 +298,27 @@ struct SettingsView: View {
     /// Local AI: let a paired device chat with this Mac's Ollama.
     private var notificationsSection: some View {
         NotificationsSettings(push: companion.push, world: world)
+    }
+
+    /// Cloud LLM keys — the single place they live. The agent, flows, and any
+    /// paired device that picks a cloud model all use these; a device only
+    /// chooses a provider + model, the key never leaves this Mac.
+    private var aiProvidersSection: some View {
+        Section {
+            caption("API keys for the online models. Stored only in this Mac's "
+                    + "Keychain. Paired devices pick a provider and model; the "
+                    + "call runs here with the key — it's never sent to the device.")
+            CloudKeyField(label: "Claude (Anthropic)", symbol: "sparkles", world: world,
+                          get: { CloudAI.claudeKey }, set: { CloudAI.claudeKey = $0 })
+            CloudKeyField(label: "OpenAI", symbol: "circle.hexagongrid.fill", world: world,
+                          get: { CloudAI.openaiKey }, set: { CloudAI.openaiKey = $0 })
+            CloudKeyField(label: "Gemini", symbol: "diamond.fill", world: world,
+                          get: { CloudAI.geminiKey }, set: { CloudAI.geminiKey = $0 })
+            CloudKeyField(label: "DevOps Institute", symbol: "graduationcap.fill", world: world,
+                          get: { CloudAI.devopsKey }, set: { CloudAI.devopsKey = $0 })
+        } header: {
+            WorldSectionHeader(title: "AI Providers", symbol: "key.fill", world: world, tint: world.primary)
+        }
     }
 
     private var aiSection: some View {
@@ -911,5 +932,45 @@ private struct WorldPreviewCard: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(theme.label)
+    }
+}
+
+/// One cloud-provider API-key row: a secure field + Save, with a Remove button
+/// once a key is stored. Keys go straight to the Keychain via `set`.
+private struct CloudKeyField: View {
+    let label: String
+    let symbol: String
+    let world: WorldStyle
+    let get: () -> String
+    let set: (String) -> Void
+
+    @State private var draft = ""
+    @State private var hasKey = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(label, systemImage: symbol)
+                .font(.system(.callout, design: .rounded).weight(.medium))
+            HStack {
+                SecureField(hasKey ? "Key saved — replace it" : "API key", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(save)
+                Button("Save", action: save)
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
+                    .disabled(draft.isEmpty)
+                if hasKey {
+                    Button(role: .destructive) { set(""); draft = ""; hasKey = false } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
+                }
+            }
+        }
+        .onAppear { hasKey = !get().isEmpty }
+    }
+
+    private func save() {
+        guard !draft.isEmpty else { return }
+        set(draft); draft = ""; hasKey = true
     }
 }

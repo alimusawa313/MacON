@@ -363,7 +363,13 @@ final class CompanionManager: ObservableObject {
                     var line = Data(#"{"error":"AI is turned off on the Mac."}"#.utf8)
                     line.append(0x0A); emit(line); return
                 }
-                await self.ollama.chat(body: body, emit: emit)
+                // Cloud providers run here with this Mac's stored keys; local
+                // (Ollama) keeps its own streaming path.
+                if let provider = Self.chatProvider(body), CloudChat.isCloud(provider) {
+                    await Self.cloudChat(provider: provider, body: body, emit: emit)
+                } else {
+                    await self.ollama.chat(body: body, emit: emit)
+                }
             },
             codeOps: CompanionServer.CodeOps(
                 list: { [weak self] path in
@@ -423,8 +429,12 @@ final class CompanionManager: ObservableObject {
                           let flow = self.flowStore.flow(id: id) else { return nil }
                     let req = (try? CompanionJSON.decoder.decode(FlowRunRequest.self, from: body))
                         ?? FlowRunRequest(payload: nil, key: nil, keys: nil)
+                    // Keys live on the Mac now: start from this Mac's stored keys,
+                    // let any the device sent (older companions) override.
+                    var keys = CloudAI.keys(for: flow)
+                    keys.merge(req.allKeys) { _, sent in sent }
                     let runId = await self.flowEngine.start(flow: flow, trigger: "manual",
-                                                            payload: req.payload, keys: req.allKeys)
+                                                            payload: req.payload, keys: keys)
                     return try? CompanionJSON.encoder.encode(FlowRunStartDTO(runId: runId))
                 },
                 runs: { [weak self] id in
@@ -521,6 +531,38 @@ final class CompanionManager: ObservableObject {
     /// Whether this Mac is on AC power (surfaced so Settings can flag that
     /// lid-closed viewing needs power).
     var onACPower: Bool { power.isOnACPower }
+
+    /// The provider named in an /ai/chat body, if any (nil → local Ollama).
+    private nonisolated static func chatProvider(_ body: Data) -> String? {
+        struct P: Decodable { let provider: String? }
+        return (try? JSONDecoder().decode(P.self, from: body))?.provider
+    }
+
+    /// Run a cloud chat with this Mac's stored key and relay it as /ai/chat
+    /// NDJSON (one content line + a done line, or an error line). Non-streaming.
+    private nonisolated static func cloudChat(provider: String, body: Data,
+                                              emit: @escaping @Sendable (Data) -> Void) async {
+        struct M: Decodable { let role: String; let content: String }
+        struct Req: Decodable { let model: String?; let messages: [M] }
+        func send(_ obj: [String: Any]) {
+            guard var d = try? JSONSerialization.data(withJSONObject: obj) else { return }
+            d.append(0x0A); emit(d)
+        }
+        guard let req = try? JSONDecoder().decode(Req.self, from: body) else {
+            send(["error": "Malformed chat request."]); return
+        }
+        let system = req.messages.first { $0.role == "system" }?.content ?? ""
+        let convo = req.messages.filter { $0.role != "system" }
+            .map { CloudChat.Msg(role: $0.role, content: $0.content) }
+        do {
+            let text = try await CloudChat.complete(provider: provider, model: req.model ?? "",
+                                                    system: system, messages: convo)
+            send(["message": ["content": text]])
+            send(["done": true])
+        } catch {
+            send(["error": error.localizedDescription])
+        }
+    }
 
     private static let powerUnavailable = CompanionPowerDTO(
         locked: false, displayAsleep: false, keepAwake: false,

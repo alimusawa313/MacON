@@ -161,6 +161,9 @@ struct NodeInspector: View {
         case .geminiModel:
             cloudControl(param, models: CloudAI.geminiModels, provider: "Gemini",
                          key: Binding(get: { CloudAI.geminiKey }, set: { CloudAI.geminiKey = $0 }))
+        case .devopsModel:
+            cloudControl(param, models: CloudAI.devopsModels, provider: "DevOps Institute",
+                         key: Binding(get: { CloudAI.devopsKey }, set: { CloudAI.devopsKey = $0 }))
         }
     }
 

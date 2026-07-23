@@ -50,9 +50,10 @@ final class AgentRunner {
         let id = String(UUID().uuidString.prefix(8))
         let run = Run()
         runs[id] = run
-        let config = AgentBrainConfig(provider: req.provider ?? "anthropic",
+        let provider = req.provider ?? "anthropic"
+        let config = AgentBrainConfig(provider: provider,
                                       model: req.model ?? "",
-                                      key: req.key)
+                                      key: Self.resolvedKey(provider: provider, requestKey: req.key))
         let supervised = (req.mode ?? "supervised") == "supervised"
         let maxSteps = min(max(req.maxSteps ?? 40, 1), 80)
 
@@ -61,6 +62,22 @@ final class AgentRunner {
                               supervised: supervised, maxSteps: maxSteps)
         }
         return CompanionAgentStartResponseDTO(agentId: id)
+    }
+
+    /// Prefer a key the device sent; otherwise fall back to this Mac's own
+    /// stored key for the provider (keys live only on the Mac now). Nil for
+    /// Ollama or when no key is configured.
+    private static func resolvedKey(provider: String, requestKey: String?) -> String? {
+        if let k = requestKey, !k.isEmpty { return k }
+        let stored: String
+        switch provider {
+        case "openai": stored = CloudAI.openaiKey
+        case "gemini": stored = CloudAI.geminiKey
+        case "devops": stored = CloudAI.devopsKey
+        case "ollama": return nil
+        default:       stored = CloudAI.claudeKey
+        }
+        return stored.isEmpty ? nil : stored
     }
 
     func eventsSince(_ id: String, after seq: Int) -> [CompanionAgentEventDTO] {
