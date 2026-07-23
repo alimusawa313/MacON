@@ -187,6 +187,7 @@ final class CompanionManager: ObservableObject {
             switch kind {
             case "wake":    if self.allowWake { self.power.wake() }
             case "unlock":  if self.allowUnlock { _ = self.power.unlock(password: self.unlockPassword) }
+            case "lock":    self.power.lock()
             case "privacy": if self.allowUnlock, !PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.raise() }
             case "tunnel":  // device can't reach us — force a fresh tunnel URL
                 if self.remoteEnabled { self.tunnel.refreshNow(); self.publishBeacon() }
@@ -331,6 +332,9 @@ final class CompanionManager: ObservableObject {
                     else  { if PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.lower() } }
                     return PrivacyCurtain.shared.isUp
                 }
+            },
+            lock: { [weak self] in
+                await MainActor.run { self?.power.lock() ?? false }
             },
             aiModels: { [weak self] in
                 guard let self, await MainActor.run(body: { self.allowAI }) else { return nil }
