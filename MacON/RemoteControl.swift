@@ -129,9 +129,10 @@ final class RemoteControl {
         let type: CGEventType = heldButton == .right ? .rightMouseDragged
                               : heldButton == .left ? .leftMouseDragged
                               : .mouseMoved
-        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p,
-                mouseButton: heldButton ?? .left)?
-            .post(tap: .cghidEventTap)
+        let ev = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p,
+                         mouseButton: heldButton ?? .left)
+        ev?.flags = liveModFlags       // explicit — never inherit a stale modifier
+        ev?.post(tap: .cghidEventTap)
     }
 
     /// Press or release a mouse button at the current cursor position.
@@ -142,8 +143,9 @@ final class RemoteControl {
         let p = CGEvent(source: nil)?.location ?? lastPoint
         lastPoint = p
         heldButton = down ? button : nil
-        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: button)?
-            .post(tap: .cghidEventTap)
+        let ev = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: button)
+        ev?.flags = liveModFlags       // explicit — never inherit a stale modifier
+        ev?.post(tap: .cghidEventTap)
     }
 
     /// Trackpad-style relative move: nudge the current cursor by (dx, dy), with a
@@ -166,16 +168,22 @@ final class RemoteControl {
             for e in [down, up] {
                 let ev = CGEvent(mouseEventSource: nil, mouseType: e, mouseCursorPosition: p, mouseButton: button)
                 ev?.setIntegerValueField(.mouseEventClickState, value: Int64(count))
-                if !flags.isEmpty { ev?.flags = flags }
+                // ALWAYS stamp flags: requested mods plus modifiers the companion
+                // legitimately holds (hardware passthrough). Left implicit, the
+                // event inherits the session's combined modifier state — and a
+                // stale ⌘/⌃ (a key-up the iPad swallowed) turns every click into
+                // ⌘-click, or a ⌃-click that reads as a right-click.
+                ev?.flags = flags.union(liveModFlags)
                 ev?.post(tap: .cghidEventTap)
             }
         }
     }
 
     private func scroll(dx: Double, dy: Double) {
-        CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
-                wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0)?
-            .post(tap: .cghidEventTap)
+        let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                         wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0)
+        ev?.flags = liveModFlags       // a stale ⌘ would turn every scroll into zoom
+        ev?.post(tap: .cghidEventTap)
     }
 
     /// Type a string as real keystrokes. Each character gets its *own* virtual
@@ -259,10 +267,12 @@ final class RemoteControl {
     /// hold the physical key down until its up event — lets macOS do its own
     /// key-repeat naturally.
     private var liveModFlags: CGEventFlags = []
+    private var heldModKeys: Set<CGKeyCode> = []   // modifier keys we've posted down
 
     private func key(_ code: CGKeyCode, down: Bool) {
         if let flag = Self.modifierFlag(for: code) {
-            if down { liveModFlags.insert(flag) } else { liveModFlags.remove(flag) }
+            if down { liveModFlags.insert(flag); heldModKeys.insert(code) }
+            else { liveModFlags.remove(flag); heldModKeys.remove(code) }
         }
         let src = CGEventSource(stateID: .hidSystemState)
         let ev = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
@@ -285,9 +295,23 @@ final class RemoteControl {
         }
     }
 
-    /// Release any stuck modifiers (called when the hardware session ends, so a
-    /// modifier whose key-up never arrived can't poison later input).
-    func releaseHeldModifiers() { liveModFlags = [] }
+    /// Release any stuck modifiers (called when the hardware session ends or the
+    /// control socket drops, so a modifier whose key-up never arrived can't
+    /// poison later input). Clearing the flag alone isn't enough: each held
+    /// modifier had a REAL key-down posted into the HID stream, so the system
+    /// keeps it held (every click becomes ⌘-click, ⌃ turns clicks into context
+    /// menus) until a matching key-up posts.
+    func releaseHeldModifiers() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        for code in heldModKeys {
+            if let flag = Self.modifierFlag(for: code) { liveModFlags.remove(flag) }
+            let ev = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)
+            ev?.flags = liveModFlags
+            ev?.post(tap: .cghidEventTap)
+        }
+        heldModKeys = []
+        liveModFlags = []
+    }
 
     /// Trigger Mission Control by launching its app — reliable regardless of
     /// how the system treats synthetic keyboard chords.
