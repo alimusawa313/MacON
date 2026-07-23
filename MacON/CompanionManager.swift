@@ -603,6 +603,7 @@ final class CompanionManager: ObservableObject {
 
     /// Start/stop screen capture on demand — driven by whether anyone is viewing.
     func setScreenCapture(_ active: Bool) {
+        NSLog("MacOn: setScreenCapture(\(active)) shareScreen=\(shareScreen)")
         viewing = active && shareScreen
         if viewing {
             guard streamer == nil else { return }
@@ -632,6 +633,7 @@ final class CompanionManager: ObservableObject {
     /// Build + start the streamer against the current main display.
     private func beginStreamer() {
         guard viewing, streamer == nil else { return }
+        logDisplayState("beginStreamer")
         let s = ScreenStreamer(fps: streamFPS, maxWidth: streamMaxWidth,
                                windowID: streamWindowID,
                                publish: { [broadcaster] packet in broadcaster.publish(packet) })
@@ -642,29 +644,53 @@ final class CompanionManager: ObservableObject {
         startAdaptation()
     }
 
-    /// Any online physical display, ignoring our own virtual one.
-    private func hasPhysicalDisplay() -> Bool {
+    /// Is there a real, *drawable* display (not our virtual one, and not a
+    /// lid-shut/asleep panel) we could capture? A lid-closed internal panel can
+    /// linger in the display lists in an un-drawable state, so we check each
+    /// online display's active + asleep flags rather than trusting the count —
+    /// that stale panel is exactly when we need the virtual display instead.
+    private func hasDrawablePhysicalDisplay() -> Bool {
         var count: UInt32 = 0
-        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return false }
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return false }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return false }
+        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return false }
         let virtual = virtualDisplay.displayID
-        return ids.prefix(Int(count)).contains { $0 != virtual }
+        return ids.prefix(Int(count)).contains {
+            $0 != virtual && CGDisplayIsActive($0) != 0 && CGDisplayIsAsleep($0) == 0
+        }
     }
 
     /// Ensure there's *something* to capture while viewing: if the lid's shut
-    /// with no external monitor (no physical display online), spin up the
+    /// with no external monitor (no drawable physical display), spin up the
     /// virtual display; tear it down once a real display returns. Returns true
     /// if it just created the virtual display (so the caller can let it settle).
     @discardableResult
     private func ensureCaptureSurface() -> Bool {
         guard viewing else { virtualDisplay.stop(); return false }
-        if hasPhysicalDisplay() {
+        let drawable = hasDrawablePhysicalDisplay()
+        NSLog("MacOn: ensureCaptureSurface drawablePhysical=\(drawable) virtualActive=\(virtualDisplay.isActive)")
+        if drawable {
             if virtualDisplay.isActive { virtualDisplay.stop() }
             return false
         }
         guard !virtualDisplay.isActive else { return false }
-        return virtualDisplay.start() != nil
+        let id = virtualDisplay.start()
+        NSLog("MacOn: virtual display start → \(id.map(String.init) ?? "FAILED")")
+        return id != nil
+    }
+
+    /// One-line dump of the current display arrangement + lock state — the
+    /// ground truth for diagnosing why lid-closed capture produces no frames.
+    private func logDisplayState(_ tag: String) {
+        var n: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &n)
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
+        CGGetOnlineDisplayList(n, &ids, &n)
+        let desc = ids.prefix(Int(n)).map { id in
+            "\(id)[active=\(CGDisplayIsActive(id) != 0) asleep=\(CGDisplayIsAsleep(id) != 0)"
+            + (id == virtualDisplay.displayID ? " VIRTUAL]" : "]")
+        }.joined(separator: ", ")
+        NSLog("MacOn[\(tag)]: main=\(CGMainDisplayID()) locked=\(power.isLocked) displayAsleep=\(power.isDisplayAsleep) online=[\(desc)]")
     }
 
     /// The display arrangement changed (lid opened/closed, monitor plugged).
