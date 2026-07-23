@@ -530,6 +530,9 @@ final class CompanionManager: ObservableObject {
         tunnel.stop()
         flowScheduler.stop()
         setScreenCapture(false)
+        // Server going away: drop the virtual display now, not after the grace.
+        virtualTeardownTask?.cancel(); virtualTeardownTask = nil
+        virtualDisplay.stop()
         // Server going away ends any compact session — drop the wall now if
         // it's ours.
         curtainLowerTask?.cancel(); curtainLowerTask = nil
@@ -611,6 +614,7 @@ final class CompanionManager: ObservableObject {
         NSLog("MacOn: setScreenCapture(\(active)) shareScreen=\(shareScreen)")
         viewing = active && shareScreen
         if viewing {
+            virtualTeardownTask?.cancel(); virtualTeardownTask = nil   // reuse a still-alive display
             guard streamer == nil else { return }
             // If the lid's shut with no external monitor there's no display to
             // capture — stand up the virtual one first, and give macOS a beat to
@@ -629,9 +633,29 @@ final class CompanionManager: ObservableObject {
             streamer?.stop()
             streamer = nil
             capturingDisplayID = 0
-            virtualDisplay.stop()
+            // Don't destroy the virtual display right away — a freshly torn-down
+            // one lingers in the display list ~15s, and creating a new one on top
+            // of it fails (applySettings). Keep it alive briefly so a quick
+            // reconnect reuses it instead of recreating.
+            scheduleVirtualDisplayTeardown()
             // Last viewer left mid-compact-session (e.g. closed the app view).
             if streamWindowID != nil { compactSessionMaybeEnded() }
+        }
+    }
+
+    private var virtualTeardownTask: Task<Void, Never>?
+
+    /// Tear the virtual display down after a grace period, unless viewing
+    /// resumes first (which cancels it) — avoids the recreate-while-lingering
+    /// race that made rapid reconnects fail.
+    private func scheduleVirtualDisplayTeardown() {
+        virtualTeardownTask?.cancel()
+        guard virtualDisplay.isActive else { return }
+        virtualTeardownTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard let self, !Task.isCancelled, !self.viewing else { return }
+            self.virtualDisplay.stop()
+            self.virtualTeardownTask = nil
         }
     }
 
