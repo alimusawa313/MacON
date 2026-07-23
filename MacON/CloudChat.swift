@@ -20,9 +20,10 @@ enum CloudChat {
         var errorDescription: String? { message }
     }
 
-    /// True for the cloud providers this handles (i.e. not local Ollama).
+    /// True for a cloud provider this handles: a built-in or a known custom one.
     static func isCloud(_ provider: String) -> Bool {
-        ["anthropic", "openai", "gemini", "devops"].contains(provider)
+        ["anthropic", "openai", "gemini"].contains(provider)
+            || CustomProviders.provider(id: provider) != nil
     }
 
     static func complete(provider: String, model: String,
@@ -33,19 +34,22 @@ enum CloudChat {
                                           key: CloudAI.openaiKey, label: "OpenAI",
                                           model: model.isEmpty ? "gpt-5.1" : model,
                                           system: system, messages: messages)
-        case "devops":
-            return try await openAICompat(base: CloudAI.devopsBase,
-                                          key: CloudAI.devopsKey, label: "DevOps Institute",
-                                          model: model.isEmpty ? "claude-haiku" : model,
-                                          system: system, messages: messages)
         case "gemini":
             return try await gemini(key: CloudAI.geminiKey,
                                     model: model.isEmpty ? "gemini-2.5-flash" : model,
                                     system: system, messages: messages)
-        default:
+        case "anthropic":
             return try await anthropic(key: CloudAI.claudeKey,
                                        model: model.isEmpty ? "claude-sonnet-5" : model,
                                        system: system, messages: messages)
+        default:
+            guard let custom = CustomProviders.provider(id: provider) else {
+                throw Fail("Unknown AI provider '\(provider)'.")
+            }
+            return try await openAICompat(base: custom.baseURL,
+                                          key: CustomProviders.key(for: provider), label: custom.name,
+                                          model: model.isEmpty ? (custom.models.first ?? "") : model,
+                                          system: system, messages: messages)
         }
     }
 

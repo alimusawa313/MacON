@@ -171,6 +171,7 @@ final class CompanionManager: ObservableObject {
     private var tunnelSink: AnyCancellable?
 
     init() {
+        CustomProviders.seedIfNeeded()   // DevOps Institute, once (removable)
         port = defaults.object(forKey: portKey) as? Int ?? 8899
         shareScreen = defaults.object(forKey: screenKey) as? Bool ?? true
         allowControl = defaults.bool(forKey: controlKey)   // default off (sensitive)
@@ -357,6 +358,14 @@ final class CompanionManager: ObservableObject {
             aiModels: { [weak self] in
                 guard let self, await MainActor.run(body: { self.allowAI }) else { return nil }
                 return await self.ollama.modelsData()
+            },
+            aiProviders: {
+                // Advertise the custom providers (name + models, no keys) so a
+                // device can list them; the key stays here.
+                let dto = CompanionAIProvidersDTO(providers: CustomProviders.all.map {
+                    CompanionAIProviderDTO(id: $0.id, name: $0.name, models: $0.models)
+                })
+                return try? JSONEncoder().encode(dto)
             },
             aiChat: { [weak self] body, emit in
                 guard let self, await MainActor.run(body: { self.allowAI }) else {

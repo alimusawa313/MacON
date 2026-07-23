@@ -161,9 +161,18 @@ struct NodeInspector: View {
         case .geminiModel:
             cloudControl(param, models: CloudAI.geminiModels, provider: "Gemini",
                          key: Binding(get: { CloudAI.geminiKey }, set: { CloudAI.geminiKey = $0 }))
-        case .devopsModel:
-            cloudControl(param, models: CloudAI.devopsModels, provider: "DevOps Institute",
-                         key: Binding(get: { CloudAI.devopsKey }, set: { CloudAI.devopsKey = $0 }))
+        case .customProvider:
+            let providers = CustomProviders.all
+            if providers.isEmpty {
+                LabeledContent(param.label) {
+                    Text("Add one in Settings → AI Providers")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } else {
+                Picker(param.label, selection: bindingWithFallback(param, fallback: providers.first?.id ?? "")) {
+                    ForEach(providers) { Text($0.name).tag($0.id) }
+                }
+            }
         }
     }
 

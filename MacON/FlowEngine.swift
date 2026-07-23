@@ -323,9 +323,9 @@ actor FlowEngine {
             return ["out": try await geminiChat(
                 model: param("model", "gemini-2.5-flash"), system: param("system"),
                 prompt: fill(param("prompt", "{{input}}")))]
-        case "ai.devops":
-            return ["out": try await devopsChat(
-                model: param("model", "claude-haiku"), system: param("system"),
+        case "ai.custom":
+            return ["out": try await customChat(
+                provider: param("provider"), model: param("model"), system: param("system"),
                 prompt: fill(param("prompt", "{{input}}")))]
         case "ai.summarize":
             let length = param("length", "short")
@@ -804,11 +804,15 @@ actor FlowEngine {
                                    model: model, system: system, prompt: prompt)
     }
 
-    /// DevOps Institute learner gateway — OpenAI-compatible at a custom base URL.
-    private func devopsChat(model: String, system: String, prompt: String) async throws -> String {
-        try await openAICompatChat(base: CloudAI.devopsBase,
-                                   provider: "devops", label: "DevOps Institute",
-                                   model: model, system: system, prompt: prompt)
+    /// A user-added OpenAI-compatible provider, resolved from the registry.
+    private func customChat(provider: String, model: String, system: String, prompt: String) async throws -> String {
+        guard let custom = CustomProviders.provider(id: provider) else {
+            throw Fail("Unknown AI provider '\(provider)'.")
+        }
+        return try await openAICompatChat(base: custom.baseURL,
+                                          provider: provider, label: custom.name,
+                                          model: model.isEmpty ? (custom.models.first ?? "") : model,
+                                          system: system, prompt: prompt)
     }
 
     /// Shared OpenAI-style chat call — OpenAI itself and any compatible gateway.

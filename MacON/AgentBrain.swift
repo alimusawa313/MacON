@@ -33,9 +33,10 @@ struct AgentPlan: Codable {
 }
 
 struct AgentBrainConfig {
-    var provider: String        // anthropic | openai | gemini | ollama
+    var provider: String        // anthropic | openai | gemini | ollama | <custom id>
     var model: String           // empty → provider default
     var key: String?            // cloud key (nil for ollama)
+    var baseURL: String?        // custom OpenAI-compatible providers only
 
     var resolvedModel: String {
         if !model.isEmpty { return model }
@@ -43,7 +44,6 @@ struct AgentBrainConfig {
         case "openai": return "gpt-4o-mini"
         case "gemini": return "gemini-2.0-flash"
         case "ollama": return "llama3.2"
-        case "devops": return "claude-haiku"
         default:       return "claude-sonnet-5"
         }
     }
@@ -166,11 +166,11 @@ enum AgentBrain {
 
     static func complete(system: String, prompt: String, config: AgentBrainConfig) async throws -> String {
         switch config.provider {
-        case "openai": return try await openai(system: system, prompt: prompt, config: config)
-        case "gemini": return try await gemini(system: system, prompt: prompt, config: config)
-        case "ollama": return try await ollama(system: system, prompt: prompt, config: config)
-        case "devops": return try await devops(system: system, prompt: prompt, config: config)
-        default:       return try await anthropic(system: system, prompt: prompt, config: config)
+        case "openai":    return try await openai(system: system, prompt: prompt, config: config)
+        case "gemini":    return try await gemini(system: system, prompt: prompt, config: config)
+        case "ollama":    return try await ollama(system: system, prompt: prompt, config: config)
+        case "anthropic": return try await anthropic(system: system, prompt: prompt, config: config)
+        default:          return try await customOpenAI(system: system, prompt: prompt, config: config)
         }
     }
 
@@ -214,12 +214,14 @@ enum AgentBrain {
                                            system: system, prompt: prompt, model: config.resolvedModel)
     }
 
-    /// DevOps Institute learner API — OpenAI-compatible at a custom base URL.
-    private static func devops(system: String, prompt: String, config: AgentBrainConfig) async throws -> String {
-        let key = try cloudKey(config, label: "DevOps Institute")
-        return try await openAICompatible(base: CloudAI.devopsBase,
-                                           key: key, label: "DevOps Institute",
-                                           system: system, prompt: prompt, model: config.resolvedModel)
+    /// A user-added OpenAI-compatible provider (base URL + key from the config).
+    private static func customOpenAI(system: String, prompt: String, config: AgentBrainConfig) async throws -> String {
+        guard let base = config.baseURL, !base.isEmpty else {
+            throw Fail("Unknown AI provider '\(config.provider)'.")
+        }
+        let key = try cloudKey(config, label: config.provider)
+        return try await openAICompatible(base: base, key: key, label: config.provider,
+                                          system: system, prompt: prompt, model: config.resolvedModel)
     }
 
     /// Shared OpenAI-style `/chat/completions` call — used by OpenAI itself and
