@@ -74,6 +74,22 @@ final class PowerManager {
     /// Whether the display has gone to sleep.
     var isDisplayAsleep: Bool { CGDisplayIsActive(CGMainDisplayID()) == 0 }
 
+    // MARK: Lock
+
+    /// Lock the screen immediately (login window up), via the same private
+    /// login.framework entry point the OS uses for ⌃⌘Q. No Accessibility
+    /// needed. Returns false if the symbol can't be resolved.
+    @discardableResult
+    func lock() -> Bool {
+        let path = "/System/Library/PrivateFrameworks/login.framework/Versions/Current/login"
+        guard let handle = dlopen(path, RTLD_NOW) else { return false }
+        defer { dlclose(handle) }
+        guard let sym = dlsym(handle, "SACLockScreenImmediate") else { return false }
+        typealias LockFn = @convention(c) () -> Int32
+        let lockScreen = unsafeBitCast(sym, to: LockFn.self)
+        return lockScreen() == 0
+    }
+
     // MARK: Unlock
 
     /// Type the password into the lock screen, then Return. Requires
