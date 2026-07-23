@@ -187,6 +187,11 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
 
     func start() { Task { await begin() } }
 
+    /// Re-run capture from scratch — used when the display arrangement changes
+    /// (e.g. the lid closed and macOS switched the desktop onto the virtual
+    /// display) so we re-target whatever the main display now is.
+    func recapture() { restart() }
+
     func forceKeyframe() {
         keyframeLock.lock(); pendingKeyframe = true; keyframeLock.unlock()
     }
@@ -199,10 +204,21 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     // MARK: Capture
 
     private func begin() async {
+        loggedFirstFrame = false
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            guard let display = content.displays.first else { return }
+            // Capture the *main* display (menu-bar screen), not just the first
+            // one enumerated. When the lid is shut and the desktop lives on the
+            // MacON virtual display, that virtual display is main — so this
+            // targets it automatically, and targets the built-in panel when the
+            // lid is open, with no special-casing.
+            guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
+                    ?? content.displays.first else {
+                NSLog("MacOn: capture found NO displays in SCShareableContent")
+                return
+            }
             self.display = display
+            NSLog("MacOn: capture target display \(display.displayID) (\(content.displays.count) available, main=\(CGMainDisplayID()))")
 
             // Capture at native (Retina) pixels, not points, so text stays crisp —
             // SCDisplay.width is in points; the real backing store is larger.
@@ -257,10 +273,15 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
             try await s.startCapture()
             stream = s
+            NSLog("MacOn: screen capture started (\(w)×\(h))")
         } catch {
             NSLog("MacOn: screen capture couldn't start — \(error.localizedDescription)")
         }
     }
+
+    /// Log the first frame that actually reaches the encoder after a (re)start —
+    /// the signal that capture is truly producing pixels, not just "started".
+    private var loggedFirstFrame = false
 
     func stop() {
         let s = stream; stream = nil
@@ -326,6 +347,11 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             return
         }
         guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        if !loggedFirstFrame {
+            loggedFirstFrame = true
+            NSLog("MacOn: first complete capture frame reached the encoder")
+        }
 
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let props: CFDictionary? = takeKeyframeRequest()
