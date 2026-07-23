@@ -63,6 +63,26 @@ final class PowerManager {
                                          kIOPMUserActiveLocal, &id)
     }
 
+    /// Force the display on: keep declaring user activity — plus an HID-level
+    /// nudge (a zero-motion mouse move, which the display manager treats as
+    /// real input) — until the panel actually reports active. A single
+    /// declaration is sometimes ignored at the lock screen; this loops until it
+    /// lands, giving up after ~3s (a shut lid has no panel to light — callers
+    /// proceed anyway and type blind, which still unlocks the session).
+    func forceDisplayOn() async {
+        for _ in 0..<10 {
+            guard isDisplayAsleep else { return }
+            wake()
+            if remote.isTrusted {          // posting events needs Accessibility
+                let loc = CGEvent(source: nil)?.location ?? .zero
+                CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                        mouseCursorPosition: loc, mouseButton: .left)?
+                    .post(tap: .cghidEventTap)
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+    }
+
     // MARK: Lock state
 
     /// Whether the login/lock window is currently up.
@@ -95,14 +115,35 @@ final class PowerManager {
     /// Type the password into the lock screen, then Return. Requires
     /// Accessibility and a stored password; returns false if either is missing.
     /// Best-effort — Secure Keyboard Entry can swallow the keystrokes.
+    ///
+    /// Returns true once a valid attempt has been *dispatched* (the actual typing
+    /// happens asynchronously). The single blind 0.4s delay this used to use lost
+    /// the password whenever the display had idle-slept: it was still coming back
+    /// on when the keys were sent. So we now wake, wait for the display to
+    /// actually be on, type, then verify and retry once if the screen is still
+    /// locked (the first attempt may have raced the login window appearing).
+    /// This recovers the idle-display-sleep case; it can't beat the *secure*
+    /// login window, where macOS refuses synthetic keystrokes regardless.
     @discardableResult
     func unlock(password: String) -> Bool {
         guard !password.isEmpty, remote.isTrusted else { return false }
-        wake()                                   // make sure the screen is lit
-        // Give the login window a moment to appear before typing.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [remote] in
+        Task { @MainActor in
+            // Force the screen on first — typing into a dark display goes
+            // nowhere (this is why unlock used to need the lid opened first).
+            await forceDisplayOn()
+            // A short settle so the login/lock window is ready for input.
+            try? await Task.sleep(for: .milliseconds(350))
             remote.typeSecure(password)
             remote.pressReturn()
+            // Still locked a beat later? The window may have appeared just after
+            // the first attempt — try once more (only once, to avoid hammering
+            // the password field if it's genuinely being rejected).
+            try? await Task.sleep(for: .milliseconds(900))
+            if isLocked {
+                await forceDisplayOn()
+                remote.typeSecure(password)
+                remote.pressReturn()
+            }
         }
         return true
     }

@@ -185,7 +185,7 @@ final class CompanionManager: ObservableObject {
         cloud.onCommand = { [weak self] kind in
             guard let self else { return }
             switch kind {
-            case "wake":    if self.allowWake { self.power.wake() }
+            case "wake":    if self.allowWake { self.power.wake(); Task { await self.power.forceDisplayOn() } }
             case "unlock":  if self.allowUnlock { _ = self.power.unlock(password: self.unlockPassword) }
             case "lock":    self.power.lock()
             case "privacy": if self.allowUnlock, !PrivacyCurtain.shared.isUp { PrivacyCurtain.shared.raise() }
@@ -316,6 +316,7 @@ final class CompanionManager: ObservableObject {
                 await MainActor.run {
                     guard let self, self.allowWake else { return }
                     self.power.wake()
+                    Task { await self.power.forceDisplayOn() }   // keep at it until the panel lights
                 }
             },
             unlock: { [weak self] in
