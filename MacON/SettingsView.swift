@@ -32,6 +32,10 @@ struct SettingsView: View {
 
     private var world: WorldStyle { WorldStyle(raw: worldRaw, dark: scheme == .dark) }
 
+    /// Keeps the Mac awake even with the lid shut — the prerequisite for
+    /// lid-closed remote use (paired with being on power).
+    private static let disableSleepCommand = "sudo pmset -a disablesleep 1"
+
     var body: some View {
         VStack(spacing: 0) {
             NavigationSplitView {
@@ -445,6 +449,35 @@ struct SettingsView: View {
                         + "so unlock is best-effort — it won't defeat a FileVault "
                         + "preboot screen.")
             }
+
+            Divider().padding(.vertical, 2)
+
+            caption("Using it with the lid closed: keep the Mac on power and stop "
+                    + "it sleeping. macOS only drives a display — the built-in one "
+                    + "or MacON's virtual one — in closed-lid “clamshell” mode while "
+                    + "on AC, so screen-sharing a lid-shut Mac needs power.")
+            HStack(spacing: 8) {
+                Pill(text: companion.onACPower ? "On AC power" : "On battery — plug in for lid-closed use",
+                     systemImage: companion.onACPower ? "powerplug.fill" : "battery.25",
+                     tint: companion.onACPower ? world.good : world.warm)
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                Text(Self.disableSleepCommand)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(Self.disableSleepCommand, forType: .string)
+                } label: { Label("Copy", systemImage: "doc.on.doc") }
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
+                Spacer()
+            }
+            caption("Run once in Terminal so the Mac stays awake even when the lid "
+                    + "shuts (survives until you undo it with "
+                    + "“sudo pmset -a disablesleep 0”).")
         } header: { WorldSectionHeader(title: "Power & Access", symbol: "power", world: world, tint: world.good) }
     }
 

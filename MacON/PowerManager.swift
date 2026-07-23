@@ -22,6 +22,7 @@
 
 import Foundation
 import IOKit.pwr_mgt
+import IOKit.ps
 import CoreGraphics
 import AppKit
 import MaconKit
@@ -93,6 +94,16 @@ final class PowerManager {
 
     /// Whether the display has gone to sleep.
     var isDisplayAsleep: Bool { CGDisplayIsActive(CGMainDisplayID()) == 0 }
+
+    /// Whether the Mac is running on AC power. Always true on a desktop with no
+    /// battery. macOS only drives a display (real or virtual) in closed-lid
+    /// clamshell mode while on AC, so lid-closed screen sharing needs this.
+    var isOnACPower: Bool {
+        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let type = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() as String?
+        else { return true }   // can't tell → assume powered (e.g. a Mac mini)
+        return type == kIOPSACPowerValue
+    }
 
     // MARK: Lock
 

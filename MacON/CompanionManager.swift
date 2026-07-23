@@ -514,8 +514,13 @@ final class CompanionManager: ObservableObject {
             canUnlock: allowUnlock && hasUnlockPassword,
             mac: net.mac,
             broadcast: net.broadcast,
-            privacyUp: PrivacyCurtain.shared.isUp)
+            privacyUp: PrivacyCurtain.shared.isUp,
+            onACPower: power.isOnACPower)
     }
+
+    /// Whether this Mac is on AC power (surfaced so Settings can flag that
+    /// lid-closed viewing needs power).
+    var onACPower: Bool { power.isOnACPower }
 
     private static let powerUnavailable = CompanionPowerDTO(
         locked: false, displayAsleep: false, keepAwake: false,
