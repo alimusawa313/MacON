@@ -238,7 +238,12 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
             config.height = h
             if windowID != nil { config.includeChildWindows = true }   // sheets, popovers
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
-            config.queueDepth = 5
+            // Minimize capture-side buffering: this is a live control stream, so
+            // dropping a frame under load is invisible but a queued frame is felt
+            // as lag. Each buffered frame adds ~1/fps of latency before the
+            // encoder even sees it — at 60fps a depth of 5 baked in ~83ms; 2
+            // keeps the encoder fed without the backlog.
+            config.queueDepth = 2
             config.showsCursor = true
             // Capture straight into the encoder's native 4:2:0 YUV. With BGRA,
             // VideoToolbox color-converted every frame on the CPU — at 60fps
