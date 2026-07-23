@@ -27,6 +27,7 @@ struct SettingsView: View {
     @State private var selection: SettingsCategory = .appearance
     @State private var aiChecked = false
     @State private var aiModelCount: Int?              // nil once checked → Ollama unreachable
+    @State private var customProviders: [CustomAIProvider] = []
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
 
@@ -78,7 +79,7 @@ struct SettingsView: View {
             case .appearance: appearanceSection
             case .accounts:   bitbucketSection; githubSection
             case .secrets:    secretsSection
-            case .companion:  companionSection; aiSection
+            case .companion:  companionSection; aiProvidersSection; aiSection
             case .notifications: notificationsSection
             case .power:      powerSection
             case .privacy:    privacyScreenSection
@@ -299,6 +300,50 @@ struct SettingsView: View {
     private var notificationsSection: some View {
         NotificationsSettings(push: companion.push, world: world)
     }
+
+    /// Cloud LLM keys — the single place they live. The agent, flows, and any
+    /// paired device that picks a cloud model all use these; a device only
+    /// chooses a provider + model, the key never leaves this Mac.
+    private var aiProvidersSection: some View {
+        Section {
+            caption("API keys for the online models. Stored only in this Mac's "
+                    + "Keychain. Paired devices pick a provider and model; the "
+                    + "call runs here with the key — it's never sent to the device.")
+            CloudKeyField(label: "Claude (Anthropic)", symbol: "sparkles", world: world,
+                          get: { CloudAI.claudeKey }, set: { CloudAI.claudeKey = $0 })
+            CloudKeyField(label: "OpenAI", symbol: "circle.hexagongrid.fill", world: world,
+                          get: { CloudAI.openaiKey }, set: { CloudAI.openaiKey = $0 })
+            CloudKeyField(label: "Gemini", symbol: "diamond.fill", world: world,
+                          get: { CloudAI.geminiKey }, set: { CloudAI.geminiKey = $0 })
+
+            Divider().padding(.vertical, 2)
+            Text("Custom (OpenAI-compatible)")
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            caption("Any OpenAI-compatible endpoint — a name, base URL, models, "
+                    + "and a key. DevOps Institute is here by default; remove it or "
+                    + "add more. These appear in the agent, code assistant, and the "
+                    + "Flows “Custom AI” block.")
+            ForEach(customProviders) { p in
+                CustomProviderRow(world: world, provider: p,
+                                  onSave: { CustomProviders.upsert($0); reloadCustomProviders() },
+                                  onRemove: { CustomProviders.remove(id: p.id); reloadCustomProviders() })
+            }
+            Button {
+                let name = "New provider"
+                CustomProviders.upsert(CustomAIProvider(id: CustomProviders.slug(from: name),
+                                                        name: name, baseURL: "", models: []))
+                reloadCustomProviders()
+            } label: {
+                Label("Add provider", systemImage: "plus.circle.fill")
+            }
+            .buttonStyle(ClaySoftButtonStyle(world: world))
+        } header: {
+            WorldSectionHeader(title: "AI Providers", symbol: "key.fill", world: world, tint: world.primary)
+        }
+        .onAppear { reloadCustomProviders() }
+    }
+
+    private func reloadCustomProviders() { customProviders = CustomProviders.all }
 
     private var aiSection: some View {
         Section {
@@ -911,5 +956,100 @@ private struct WorldPreviewCard: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(theme.label)
+    }
+}
+
+/// One cloud-provider API-key row: a secure field + Save, with a Remove button
+/// once a key is stored. Keys go straight to the Keychain via `set`.
+private struct CloudKeyField: View {
+    let label: String
+    let symbol: String
+    let world: WorldStyle
+    let get: () -> String
+    let set: (String) -> Void
+
+    @State private var draft = ""
+    @State private var hasKey = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(label, systemImage: symbol)
+                .font(.system(.callout, design: .rounded).weight(.medium))
+            HStack {
+                SecureField(hasKey ? "Key saved — replace it" : "API key", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(save)
+                Button("Save", action: save)
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
+                    .disabled(draft.isEmpty)
+                if hasKey {
+                    Button(role: .destructive) { set(""); draft = ""; hasKey = false } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
+                }
+            }
+        }
+        .onAppear { hasKey = !get().isEmpty }
+    }
+
+    private func save() {
+        guard !draft.isEmpty else { return }
+        set(draft); draft = ""; hasKey = true
+    }
+}
+
+/// An editable row for one custom (OpenAI-compatible) provider: name, base URL,
+/// models, and its key. Save writes all four; the trash removes it.
+private struct CustomProviderRow: View {
+    let world: WorldStyle
+    let provider: CustomAIProvider
+    let onSave: (CustomAIProvider) -> Void
+    let onRemove: () -> Void
+
+    @State private var name = ""
+    @State private var baseURL = ""
+    @State private var modelsText = ""
+    @State private var keyDraft = ""
+    @State private var hasKey = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+            TextField("Base URL — https://…/v1/chat/completions", text: $baseURL)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            TextField("Models (comma-separated)", text: $modelsText)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            HStack {
+                SecureField(hasKey ? "Key saved — replace it" : "API key", text: $keyDraft)
+                    .textFieldStyle(.roundedBorder)
+                Button("Save", action: save)
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
+                Button(role: .destructive, action: onRemove) { Image(systemName: "trash") }
+                    .buttonStyle(ClaySoftButtonStyle(world: world, danger: true))
+            }
+        }
+        .padding(.vertical, 4)
+        .onAppear {
+            name = provider.name
+            baseURL = provider.baseURL
+            modelsText = provider.models.joined(separator: ", ")
+            hasKey = !CustomProviders.key(for: provider.id).isEmpty
+        }
+    }
+
+    private func save() {
+        let models = modelsText.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        var p = provider
+        p.name = name.isEmpty ? provider.name : name
+        p.baseURL = baseURL.trimmingCharacters(in: .whitespaces)
+        p.models = models
+        if !keyDraft.isEmpty { CustomProviders.setKey(keyDraft, for: p.id); keyDraft = ""; hasKey = true }
+        onSave(p)
     }
 }

@@ -50,9 +50,18 @@ final class AgentRunner {
         let id = String(UUID().uuidString.prefix(8))
         let run = Run()
         runs[id] = run
-        let config = AgentBrainConfig(provider: req.provider ?? "anthropic",
-                                      model: req.model ?? "",
-                                      key: req.key)
+        let provider = req.provider ?? "anthropic"
+        var model = req.model ?? ""
+        var baseURL: String? = nil
+        var key = Self.resolvedKey(provider: provider, requestKey: req.key)
+        // A user-added (custom) provider: fill its base URL, key, and default
+        // model from the Mac's registry.
+        if let custom = CustomProviders.provider(id: provider) {
+            baseURL = custom.baseURL
+            if (key ?? "").isEmpty { key = Self.nonEmpty(CustomProviders.key(for: provider)) }
+            if model.isEmpty { model = custom.models.first ?? "" }
+        }
+        let config = AgentBrainConfig(provider: provider, model: model, key: key, baseURL: baseURL)
         let supervised = (req.mode ?? "supervised") == "supervised"
         let maxSteps = min(max(req.maxSteps ?? 40, 1), 80)
 
@@ -62,6 +71,23 @@ final class AgentRunner {
         }
         return CompanionAgentStartResponseDTO(agentId: id)
     }
+
+    /// Prefer a key the device sent; otherwise fall back to this Mac's own
+    /// stored key for the provider (keys live only on the Mac now). Nil for
+    /// Ollama or when no key is configured.
+    private static func resolvedKey(provider: String, requestKey: String?) -> String? {
+        if let k = requestKey, !k.isEmpty { return k }
+        let stored: String
+        switch provider {
+        case "openai":    stored = CloudAI.openaiKey
+        case "gemini":    stored = CloudAI.geminiKey
+        case "anthropic": stored = CloudAI.claudeKey
+        default:          return nil   // ollama (no key) or a custom provider
+        }
+        return stored.isEmpty ? nil : stored
+    }
+
+    private static func nonEmpty(_ s: String) -> String? { s.isEmpty ? nil : s }
 
     func eventsSince(_ id: String, after seq: Int) -> [CompanionAgentEventDTO] {
         (runs[id]?.events ?? []).filter { $0.seq > seq }

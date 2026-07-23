@@ -33,9 +33,10 @@ struct AgentPlan: Codable {
 }
 
 struct AgentBrainConfig {
-    var provider: String        // anthropic | openai | gemini | ollama
+    var provider: String        // anthropic | openai | gemini | ollama | <custom id>
     var model: String           // empty → provider default
     var key: String?            // cloud key (nil for ollama)
+    var baseURL: String?        // custom OpenAI-compatible providers only
 
     var resolvedModel: String {
         if !model.isEmpty { return model }
@@ -165,10 +166,11 @@ enum AgentBrain {
 
     static func complete(system: String, prompt: String, config: AgentBrainConfig) async throws -> String {
         switch config.provider {
-        case "openai": return try await openai(system: system, prompt: prompt, config: config)
-        case "gemini": return try await gemini(system: system, prompt: prompt, config: config)
-        case "ollama": return try await ollama(system: system, prompt: prompt, config: config)
-        default:       return try await anthropic(system: system, prompt: prompt, config: config)
+        case "openai":    return try await openai(system: system, prompt: prompt, config: config)
+        case "gemini":    return try await gemini(system: system, prompt: prompt, config: config)
+        case "ollama":    return try await ollama(system: system, prompt: prompt, config: config)
+        case "anthropic": return try await anthropic(system: system, prompt: prompt, config: config)
+        default:          return try await customOpenAI(system: system, prompt: prompt, config: config)
         }
     }
 
@@ -207,6 +209,26 @@ enum AgentBrain {
 
     private static func openai(system: String, prompt: String, config: AgentBrainConfig) async throws -> String {
         let key = try cloudKey(config, label: "OpenAI")
+        return try await openAICompatible(base: "https://api.openai.com/v1/chat/completions",
+                                           key: key, label: "OpenAI",
+                                           system: system, prompt: prompt, model: config.resolvedModel)
+    }
+
+    /// A user-added OpenAI-compatible provider (base URL + key from the config).
+    private static func customOpenAI(system: String, prompt: String, config: AgentBrainConfig) async throws -> String {
+        guard let base = config.baseURL, !base.isEmpty else {
+            throw Fail("Unknown AI provider '\(config.provider)'.")
+        }
+        let key = try cloudKey(config, label: config.provider)
+        return try await openAICompatible(base: base, key: key, label: config.provider,
+                                          system: system, prompt: prompt, model: config.resolvedModel)
+    }
+
+    /// Shared OpenAI-style `/chat/completions` call — used by OpenAI itself and
+    /// any OpenAI-compatible gateway (e.g. the DevOps Institute endpoint), which
+    /// differ only by base URL, model names, and the bearer key.
+    private static func openAICompatible(base: String, key: String, label: String,
+                                         system: String, prompt: String, model: String) async throws -> String {
         struct Msg: Codable { let role: String; let content: String }
         struct Req: Encodable { let model: String; let messages: [Msg] }
         struct Resp: Decodable {
@@ -215,16 +237,16 @@ enum AgentBrain {
             let choices: [Choice]?
             let error: Err?
         }
-        var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        var req = URLRequest(url: URL(string: base)!)
         req.httpMethod = "POST"
         req.timeoutInterval = 120
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(Req(model: config.resolvedModel, messages: [
+        req.httpBody = try JSONEncoder().encode(Req(model: model, messages: [
             Msg(role: "system", content: system), Msg(role: "user", content: prompt)]))
         let (data, _) = try await URLSession.shared.data(for: req)
         let resp = try JSONDecoder().decode(Resp.self, from: data)
-        if let message = resp.error?.message { throw Fail("OpenAI: \(message)") }
+        if let message = resp.error?.message { throw Fail("\(label): \(message)") }
         return resp.choices?.first?.message?.content ?? ""
     }
 

@@ -55,6 +55,12 @@ enum CloudAI {
         if flow.nodes.contains(where: { $0.type == "ai.claude" }) { put("anthropic", claudeKey) }
         if flow.nodes.contains(where: { $0.type == "ai.openai" }) { put("openai", openaiKey) }
         if flow.nodes.contains(where: { $0.type == "ai.gemini" }) { put("gemini", geminiKey) }
+        // Custom (OpenAI-compatible) providers: each ai.custom node names one.
+        for node in flow.nodes where node.type == "ai.custom" {
+            if let pid = node.params["provider"], !pid.isEmpty {
+                put(pid, CustomProviders.key(for: pid))
+            }
+        }
         return out
     }
 }
@@ -114,9 +120,10 @@ struct BlockParam: Identifiable {
         case pick([String])
         case localModel            // installed Ollama models
         case visionModel           // only vision-capable local models
-        case claudeModel           // Claude picker (+ key field)
-        case openaiModel           // GPT picker (+ key field)
-        case geminiModel           // Gemini picker (+ key field)
+        case claudeModel           // Claude picker (key on the Mac)
+        case openaiModel           // GPT picker (key on the Mac)
+        case geminiModel           // Gemini picker (key on the Mac)
+        case customProvider        // picker of user-added custom providers
     }
     let key: String                // single-word lowercase
     let label: String
@@ -221,6 +228,16 @@ struct BlockSpec: Identifiable {
                   category: .ai, symbol: "diamond.fill",
                   params: [BlockParam(key: "model", label: "Model", kind: .geminiModel,
                                       fallback: "gemini-2.5-flash"),
+                           BlockParam(key: "system", label: "System prompt", kind: .multiline,
+                                      placeholder: "Optional behavior instructions"),
+                           BlockParam(key: "prompt", label: "Prompt", kind: .multiline,
+                                      fallback: "{{input}}", placeholder: templateHint)]),
+        BlockSpec(type: "ai.custom", title: "Custom AI",
+                  blurb: "An OpenAI-compatible provider you added",
+                  category: .ai, symbol: "cpu.fill",
+                  params: [BlockParam(key: "provider", label: "Provider", kind: .customProvider),
+                           BlockParam(key: "model", label: "Model", kind: .text,
+                                      placeholder: "Blank = the provider's first model"),
                            BlockParam(key: "system", label: "System prompt", kind: .multiline,
                                       placeholder: "Optional behavior instructions"),
                            BlockParam(key: "prompt", label: "Prompt", kind: .multiline,
@@ -514,6 +531,7 @@ struct BlockSpec: Identifiable {
         case "ai.claude":         return v("model") ?? "claude-sonnet-5"
         case "ai.openai":         return v("model") ?? "gpt-5.1"
         case "ai.gemini":         return v("model") ?? "gemini-2.5-flash"
+        case "ai.custom":         return v("provider") ?? "Custom AI"
         case "ai.rewrite":        return v("style") ?? blurb
         case "sys.shell":         return v("command")?.components(separatedBy: .newlines).first ?? blurb
         case "sys.volume":        return "\(v("level") ?? "50")%"
