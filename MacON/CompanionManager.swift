@@ -127,6 +127,14 @@ final class CompanionManager: ObservableObject {
     private let store = PairingStore()
     private let broadcaster = ScreenBroadcaster()
     private var streamer: ScreenStreamer?
+    /// A private-API virtual display, stood up on demand so a lid-closed Mac
+    /// (no external monitor) still has a capturable desktop to stream + unlock.
+    private let virtualDisplay = VirtualDisplayHost()
+    /// Whether a device is currently viewing the screen.
+    private var viewing = false
+    /// The display we're capturing, so a display-arrangement change only
+    /// restarts capture when the target actually moved (internal ↔ virtual).
+    private var capturingDisplayID: CGDirectDisplayID = 0
     private let remote = RemoteControl()
     /// The dictate-to-drive agent. Lazily built so it captures `self` for the
     /// control gate. A task is remote control, so it rides the same toggle.
@@ -222,6 +230,15 @@ final class CompanionManager: ObservableObject {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.recoverAfterWake() }
+        }
+
+        // React to the lid opening/closing (or a monitor coming/going) while a
+        // device is viewing: create or drop the virtual display as needed and
+        // re-target capture at whatever the main display now is.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleDisplayChange() }
         }
     }
 
@@ -586,21 +603,79 @@ final class CompanionManager: ObservableObject {
 
     /// Start/stop screen capture on demand — driven by whether anyone is viewing.
     func setScreenCapture(_ active: Bool) {
-        if active && shareScreen {
+        viewing = active && shareScreen
+        if viewing {
             guard streamer == nil else { return }
-            let s = ScreenStreamer(fps: streamFPS, maxWidth: streamMaxWidth,
-                                   windowID: streamWindowID,
-                                   publish: { [broadcaster] packet in broadcaster.publish(packet) })
-            s.setExcludedWindows(PrivacyCurtain.shared.excludedWindowNumbers)
-            s.start()
-            streamer = s
-            startAdaptation()
+            // If the lid's shut with no external monitor there's no display to
+            // capture — stand up the virtual one first, and give macOS a beat to
+            // bring it online before the streamer enumerates displays.
+            let createdVirtual = ensureCaptureSurface()
+            if createdVirtual {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(800))
+                    self.beginStreamer()
+                }
+            } else {
+                beginStreamer()
+            }
         } else {
             statsTimer?.invalidate(); statsTimer = nil
             streamer?.stop()
             streamer = nil
+            capturingDisplayID = 0
+            virtualDisplay.stop()
             // Last viewer left mid-compact-session (e.g. closed the app view).
             if streamWindowID != nil { compactSessionMaybeEnded() }
+        }
+    }
+
+    /// Build + start the streamer against the current main display.
+    private func beginStreamer() {
+        guard viewing, streamer == nil else { return }
+        let s = ScreenStreamer(fps: streamFPS, maxWidth: streamMaxWidth,
+                               windowID: streamWindowID,
+                               publish: { [broadcaster] packet in broadcaster.publish(packet) })
+        s.setExcludedWindows(PrivacyCurtain.shared.excludedWindowNumbers)
+        s.start()
+        streamer = s
+        capturingDisplayID = CGMainDisplayID()
+        startAdaptation()
+    }
+
+    /// Any online physical display, ignoring our own virtual one.
+    private func hasPhysicalDisplay() -> Bool {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return false }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return false }
+        let virtual = virtualDisplay.displayID
+        return ids.prefix(Int(count)).contains { $0 != virtual }
+    }
+
+    /// Ensure there's *something* to capture while viewing: if the lid's shut
+    /// with no external monitor (no physical display online), spin up the
+    /// virtual display; tear it down once a real display returns. Returns true
+    /// if it just created the virtual display (so the caller can let it settle).
+    @discardableResult
+    private func ensureCaptureSurface() -> Bool {
+        guard viewing else { virtualDisplay.stop(); return false }
+        if hasPhysicalDisplay() {
+            if virtualDisplay.isActive { virtualDisplay.stop() }
+            return false
+        }
+        guard !virtualDisplay.isActive else { return false }
+        return virtualDisplay.start() != nil
+    }
+
+    /// The display arrangement changed (lid opened/closed, monitor plugged).
+    /// Re-decide the capture surface and, if the main display actually moved,
+    /// restart capture so it follows onto the new one.
+    private func handleDisplayChange() {
+        guard viewing else { return }
+        ensureCaptureSurface()
+        if CGMainDisplayID() != capturingDisplayID {
+            capturingDisplayID = CGMainDisplayID()
+            streamer?.recapture()
         }
     }
 

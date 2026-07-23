@@ -187,6 +187,11 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
 
     func start() { Task { await begin() } }
 
+    /// Re-run capture from scratch — used when the display arrangement changes
+    /// (e.g. the lid closed and macOS switched the desktop onto the virtual
+    /// display) so we re-target whatever the main display now is.
+    func recapture() { restart() }
+
     func forceKeyframe() {
         keyframeLock.lock(); pendingKeyframe = true; keyframeLock.unlock()
     }
@@ -201,7 +206,13 @@ final class ScreenStreamer: NSObject, SCStreamOutput, @unchecked Sendable {
     private func begin() async {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            guard let display = content.displays.first else { return }
+            // Capture the *main* display (menu-bar screen), not just the first
+            // one enumerated. When the lid is shut and the desktop lives on the
+            // MacON virtual display, that virtual display is main — so this
+            // targets it automatically, and targets the built-in panel when the
+            // lid is open, with no special-casing.
+            guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
+                    ?? content.displays.first else { return }
             self.display = display
 
             // Capture at native (Retina) pixels, not points, so text stays crisp —
