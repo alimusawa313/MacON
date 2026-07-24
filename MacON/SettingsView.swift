@@ -30,6 +30,8 @@ struct SettingsView: View {
     @State private var customProviders: [CustomAIProvider] = []
     @AppStorage(PiperTTS.binaryKey) private var piperPath = ""
     @AppStorage(PiperTTS.voiceKey) private var piperVoice = ""
+    @State private var piper = PiperInstaller()
+    @State private var voiceChoice = PiperInstaller.voices[0].id
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
 
@@ -431,34 +433,113 @@ struct SettingsView: View {
         Section {
             caption("Voice mode on the companion talks to an AI agent that sees "
                     + "and drives this Mac. Replies are spoken with Piper — free, "
-                    + "open-source TTS that runs entirely on this Mac. Install it "
-                    + "from github.com/rhasspy/piper (binary + a voice .onnx), "
-                    + "then point these at them. Without Piper the device falls "
-                    + "back to its own system voice.")
+                    + "open-source TTS that runs entirely on this Mac. Without it "
+                    + "the device falls back to its own system voice.")
+
+            // Pick a voice from the official library — it's the install
+            // trigger the first time, and a switcher afterwards.
             HStack {
-                Text("Piper binary")
+                Text("Voice")
                     .font(.system(.subheadline, design: .rounded).weight(.medium))
                     .frame(width: 110, alignment: .leading)
-                TextField("/opt/homebrew/bin/piper (auto-detected if empty)", text: $piperPath)
-                    .textFieldStyle(.roundedBorder)
+                Picker("", selection: $voiceChoice) {
+                    ForEach(PiperInstaller.voices) { v in
+                        Text(v.label).tag(v.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 320)
+                .disabled(piper.busy)
+                Spacer()
             }
-            HStack {
-                Text("Voice model")
-                    .font(.system(.subheadline, design: .rounded).weight(.medium))
-                    .frame(width: 110, alignment: .leading)
-                TextField("~/piper/en_US-lessac-medium.onnx (auto-detected if empty)", text: $piperVoice)
-                    .textFieldStyle(.roundedBorder)
-            }
-            if PiperTTS.isAvailable {
-                Pill(text: "Piper ready — replies use the open-source voice",
-                     systemImage: "waveform", tint: world.good)
+
+            if piper.busy {
+                VStack(alignment: .leading, spacing: 6) {
+                    if case .installing = piper.stage {
+                        ProgressView()
+                    } else if case .testing = piper.stage {
+                        ProgressView()
+                    } else {
+                        ProgressView(value: piper.progress)
+                    }
+                    Text(piperStageLabel)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(world.ink.opacity(0.6))
+                }
+            } else if !PiperTTS.isAvailable {
+                Button { installChosenVoice() } label: {
+                    Label("Install Piper voice  (~80–130 MB)", systemImage: "arrow.down.circle.fill")
+                }
+                .buttonStyle(ClaySoftButtonStyle(world: world))
+                caption("One click — downloads the Piper engine from its official "
+                        + "GitHub release and the chosen voice from the official "
+                        + "voice library, sets everything up, and plays a test "
+                        + "line. Nothing to do in Terminal.")
             } else {
-                Pill(text: "Piper not found — the device will use its system voice",
-                     systemImage: "waveform.slash", tint: world.warm)
+                Pill(text: "Piper ready — replies use \(voiceLabel(PiperInstaller.currentVoiceID() ?? voiceChoice))",
+                     systemImage: "waveform", tint: world.good)
+                if voiceChoice != PiperInstaller.currentVoiceID() {
+                    Button { installChosenVoice() } label: {
+                        Label("Switch to this voice", systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
+                    caption("Only the new voice model is downloaded — the engine "
+                            + "and already-downloaded voices are kept.")
+                }
+            }
+            if case .failed(let why) = piper.stage {
+                Pill(text: why, systemImage: "exclamationmark.triangle.fill", tint: world.bad)
+            }
+
+            DisclosureGroup {
+                HStack {
+                    Text("Piper binary")
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .frame(width: 110, alignment: .leading)
+                    TextField("/opt/homebrew/bin/piper (auto-detected if empty)", text: $piperPath)
+                        .textFieldStyle(.roundedBorder)
+                }
+                HStack {
+                    Text("Voice model")
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .frame(width: 110, alignment: .leading)
+                    TextField("~/piper/en_US-lessac-medium.onnx (auto-detected if empty)", text: $piperVoice)
+                        .textFieldStyle(.roundedBorder)
+                }
+            } label: {
+                Text("Use my own Piper install")
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                    .foregroundStyle(world.ink.opacity(0.75))
             }
         } header: {
             WorldSectionHeader(title: "Voice mode", symbol: "waveform.circle.fill",
                                world: world, tint: world.primary)
+        }
+        .onAppear {
+            // Reflect whatever voice is actually wired in.
+            if let current = PiperInstaller.currentVoiceID(),
+               PiperInstaller.voices.contains(where: { $0.id == current }) {
+                voiceChoice = current
+            }
+        }
+    }
+
+    private func installChosenVoice() {
+        guard let voice = PiperInstaller.voices.first(where: { $0.id == voiceChoice }) else { return }
+        piper.install(voice: voice)
+    }
+
+    private func voiceLabel(_ id: String) -> String {
+        PiperInstaller.voices.first { $0.id == id }?.label ?? id
+    }
+
+    private var piperStageLabel: String {
+        switch piper.stage {
+        case .downloadingPiper: return "Downloading the Piper engine… \(Int(piper.progress * 100))%"
+        case .installing:       return "Unpacking…"
+        case .downloadingVoice: return "Downloading the voice… \(Int(piper.progress * 100))%"
+        case .testing:          return "Testing the voice…"
+        default:                return ""
         }
     }
 
