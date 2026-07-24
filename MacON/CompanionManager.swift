@@ -570,9 +570,12 @@ final class CompanionManager: ObservableObject {
         let convo = req.messages.filter { $0.role != "system" }
             .map { CloudChat.Msg(role: $0.role, content: $0.content) }
         do {
-            let text = try await CloudChat.complete(provider: provider, model: req.model ?? "",
-                                                    system: system, messages: convo)
-            send(["message": ["content": text]])
+            // Relay each token the instant it arrives (same NDJSON shape the
+            // device already streams for local Ollama).
+            _ = try await CloudChat.complete(provider: provider, model: req.model ?? "",
+                                             system: system, messages: convo) { delta in
+                send(["message": ["content": delta]])
+            }
             send(["done": true])
         } catch {
             send(["error": error.localizedDescription])
