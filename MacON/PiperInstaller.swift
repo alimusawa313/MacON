@@ -56,53 +56,96 @@ final class PiperInstaller {
     #endif
     private static let engineURL =
         URL(string: "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/\(archive)")!
-    static let voiceName = "en_US-lessac-medium"
-    private static let voiceBase =
-        "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/"
+    private static let voicesRepo = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
+
+    /// A voice from the official library. `id` is the file base name piper
+    /// uses; `dir` is its path inside the repo.
+    struct Voice: Identifiable, Hashable {
+        let id: String
+        let label: String
+        let dir: String
+        var onnxURL: URL { URL(string: "\(PiperInstaller.voicesRepo)/\(dir)/\(id).onnx")! }
+        var jsonURL: URL { URL(string: "\(PiperInstaller.voicesRepo)/\(dir)/\(id).onnx.json")! }
+    }
+
+    /// Curated voices (all verified to exist at v1.0.0). Default first.
+    static let voices: [Voice] = [
+        Voice(id: "en_US-lessac-medium", label: "Lessac · US English",
+              dir: "en/en_US/lessac/medium"),
+        Voice(id: "en_US-amy-medium", label: "Amy · US English",
+              dir: "en/en_US/amy/medium"),
+        Voice(id: "en_US-ryan-high", label: "Ryan · US English (high quality)",
+              dir: "en/en_US/ryan/high"),
+        Voice(id: "en_GB-alba-medium", label: "Alba · British English",
+              dir: "en/en_GB/alba/medium"),
+        Voice(id: "de_DE-thorsten-medium", label: "Thorsten · German",
+              dir: "de/de_DE/thorsten/medium"),
+        Voice(id: "fr_FR-siwis-medium", label: "Siwis · French",
+              dir: "fr/fr_FR/siwis/medium"),
+        Voice(id: "es_ES-davefx-medium", label: "DaveFX · Spanish",
+              dir: "es/es_ES/davefx/medium"),
+        Voice(id: "zh_CN-huayan-medium", label: "Huayan · Mandarin",
+              dir: "zh/zh_CN/huayan/medium"),
+    ]
+
+    /// The base name of the voice currently wired into PiperTTS
+    /// (e.g. "en_US-lessac-medium"), whether ours or a manual install.
+    static func currentVoiceID() -> String? {
+        guard let path = PiperTTS.voicePath() else { return nil }
+        return ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+    }
 
     // MARK: Install
 
-    func install() {
+    /// Install the engine (if missing) and the chosen voice. Switching voices
+    /// later only downloads the new model — the engine is kept.
+    func install(voice: Voice) {
         guard !busy else { return }
-        Task { await run() }
+        Task { await run(voice: voice) }
     }
 
-    private func run() async {
+    private func run(voice choice: Voice) async {
         do {
             let dir = Self.installDir
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
             // 1. The engine bundle: piper binary + espeak-ng data + dylibs,
             //    which all live side by side in the tarball's piper/ folder.
-            stage = .downloadingPiper; progress = 0
-            let tar = try await download(Self.engineURL)
-            stage = .installing
-            try await shell("/usr/bin/tar", "-xzf", tar.path, "-C", dir.path)
-            try? FileManager.default.removeItem(at: tar)
+            //    Skipped when a piper is already available (in-app or manual).
+            let installedBinary = dir.appendingPathComponent("piper/piper")
+            if PiperTTS.binaryPath() == nil {
+                stage = .downloadingPiper; progress = 0
+                let tar = try await download(Self.engineURL)
+                stage = .installing
+                try await shell("/usr/bin/tar", "-xzf", tar.path, "-C", dir.path)
+                try? FileManager.default.removeItem(at: tar)
 
-            let binary = dir.appendingPathComponent("piper/piper")
-            guard FileManager.default.fileExists(atPath: binary.path) else {
-                throw Fail("The download didn't contain the piper binary.")
+                guard FileManager.default.fileExists(atPath: installedBinary.path) else {
+                    throw Fail("The download didn't contain the piper binary.")
+                }
+                // tar preserves both from the archive, but belt-and-braces: the
+                // exec bit must be set and a quarantined binary won't launch.
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                       ofItemAtPath: installedBinary.path)
+                try? await shell("/usr/bin/xattr", "-dr", "com.apple.quarantine", dir.path)
+                UserDefaults.standard.set(installedBinary.path, forKey: PiperTTS.binaryKey)
             }
-            // tar preserves both from the archive, but belt-and-braces: the
-            // exec bit must be set and a quarantined binary won't launch.
-            try? FileManager.default.setAttributes([.posixPermissions: 0o755],
-                                                   ofItemAtPath: binary.path)
-            try? await shell("/usr/bin/xattr", "-dr", "com.apple.quarantine", dir.path)
 
-            // 2. The voice: model + its .json config, side by side as piper expects.
-            stage = .downloadingVoice; progress = 0
-            let onnx = try await download(URL(string: Self.voiceBase + "\(Self.voiceName).onnx")!)
-            let voice = dir.appendingPathComponent("\(Self.voiceName).onnx")
-            try? FileManager.default.removeItem(at: voice)
-            try FileManager.default.moveItem(at: onnx, to: voice)
-            let json = try await download(URL(string: Self.voiceBase + "\(Self.voiceName).onnx.json")!)
-            let config = dir.appendingPathComponent("\(Self.voiceName).onnx.json")
-            try? FileManager.default.removeItem(at: config)
-            try FileManager.default.moveItem(at: json, to: config)
+            // 2. The voice: model + its .json config, side by side as piper
+            //    expects (already-downloaded voices are reused instantly).
+            let voice = dir.appendingPathComponent("\(choice.id).onnx")
+            let config = dir.appendingPathComponent("\(choice.id).onnx.json")
+            if !FileManager.default.fileExists(atPath: voice.path) {
+                stage = .downloadingVoice; progress = 0
+                let onnx = try await download(choice.onnxURL)
+                try? FileManager.default.removeItem(at: voice)
+                try FileManager.default.moveItem(at: onnx, to: voice)
+                let json = try await download(choice.jsonURL)
+                try? FileManager.default.removeItem(at: config)
+                try FileManager.default.moveItem(at: json, to: config)
+            }
 
             // 3. Point the TTS at it and prove it speaks.
-            UserDefaults.standard.set(binary.path, forKey: PiperTTS.binaryKey)
             UserDefaults.standard.set(voice.path, forKey: PiperTTS.voiceKey)
             stage = .testing
             guard await PiperTTS.synthesize("Voice mode is ready.") != nil else {

@@ -31,6 +31,7 @@ struct SettingsView: View {
     @AppStorage(PiperTTS.binaryKey) private var piperPath = ""
     @AppStorage(PiperTTS.voiceKey) private var piperVoice = ""
     @State private var piper = PiperInstaller()
+    @State private var voiceChoice = PiperInstaller.voices[0].id
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
 
@@ -435,10 +436,24 @@ struct SettingsView: View {
                     + "open-source TTS that runs entirely on this Mac. Without it "
                     + "the device falls back to its own system voice.")
 
-            if PiperTTS.isAvailable {
-                Pill(text: "Piper ready — replies use the open-source voice",
-                     systemImage: "waveform", tint: world.good)
-            } else if piper.busy {
+            // Pick a voice from the official library — it's the install
+            // trigger the first time, and a switcher afterwards.
+            HStack {
+                Text("Voice")
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                    .frame(width: 110, alignment: .leading)
+                Picker("", selection: $voiceChoice) {
+                    ForEach(PiperInstaller.voices) { v in
+                        Text(v.label).tag(v.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 320)
+                .disabled(piper.busy)
+                Spacer()
+            }
+
+            if piper.busy {
                 VStack(alignment: .leading, spacing: 6) {
                     if case .installing = piper.stage {
                         ProgressView()
@@ -451,15 +466,26 @@ struct SettingsView: View {
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(world.ink.opacity(0.6))
                 }
-            } else {
-                Button { piper.install() } label: {
-                    Label("Install Piper voice  (~85 MB)", systemImage: "arrow.down.circle.fill")
+            } else if !PiperTTS.isAvailable {
+                Button { installChosenVoice() } label: {
+                    Label("Install Piper voice  (~80–130 MB)", systemImage: "arrow.down.circle.fill")
                 }
                 .buttonStyle(ClaySoftButtonStyle(world: world))
                 caption("One click — downloads the Piper engine from its official "
-                        + "GitHub release and the \(PiperInstaller.voiceName) voice "
-                        + "from the official voice library, sets everything up, and "
-                        + "plays a test line. Nothing to do in Terminal.")
+                        + "GitHub release and the chosen voice from the official "
+                        + "voice library, sets everything up, and plays a test "
+                        + "line. Nothing to do in Terminal.")
+            } else {
+                Pill(text: "Piper ready — replies use \(voiceLabel(PiperInstaller.currentVoiceID() ?? voiceChoice))",
+                     systemImage: "waveform", tint: world.good)
+                if voiceChoice != PiperInstaller.currentVoiceID() {
+                    Button { installChosenVoice() } label: {
+                        Label("Switch to this voice", systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(ClaySoftButtonStyle(world: world))
+                    caption("Only the new voice model is downloaded — the engine "
+                            + "and already-downloaded voices are kept.")
+                }
             }
             if case .failed(let why) = piper.stage {
                 Pill(text: why, systemImage: "exclamationmark.triangle.fill", tint: world.bad)
@@ -489,6 +515,22 @@ struct SettingsView: View {
             WorldSectionHeader(title: "Voice mode", symbol: "waveform.circle.fill",
                                world: world, tint: world.primary)
         }
+        .onAppear {
+            // Reflect whatever voice is actually wired in.
+            if let current = PiperInstaller.currentVoiceID(),
+               PiperInstaller.voices.contains(where: { $0.id == current }) {
+                voiceChoice = current
+            }
+        }
+    }
+
+    private func installChosenVoice() {
+        guard let voice = PiperInstaller.voices.first(where: { $0.id == voiceChoice }) else { return }
+        piper.install(voice: voice)
+    }
+
+    private func voiceLabel(_ id: String) -> String {
+        PiperInstaller.voices.first { $0.id == id }?.label ?? id
     }
 
     private var piperStageLabel: String {
