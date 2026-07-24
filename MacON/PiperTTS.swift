@@ -44,7 +44,21 @@ enum PiperTTS {
         return nil
     }
 
-    static var isAvailable: Bool { binaryPath() != nil && voicePath() != nil }
+    static var isAvailable: Bool {
+        guard let bin = binaryPath(), voicePath() != nil else { return false }
+        return engineComplete(bin)
+    }
+
+    /// The in-app binary can only launch if its runtime dylibs (libespeak-ng,
+    /// libpiper_phonemize, libonnxruntime) sit beside it — they ship in a
+    /// SEPARATE piper-phonemize release, not the piper tarball, so an install
+    /// that fetched only piper is present-but-unrunnable. A manual/Homebrew
+    /// binary carries its own linkage, so it's assumed complete.
+    static func engineComplete(_ binary: String) -> Bool {
+        guard binary.hasPrefix(PiperInstaller.installDir.path) else { return true }
+        let dir = (binary as NSString).deletingLastPathComponent
+        return FileManager.default.fileExists(atPath: dir + "/libespeak-ng.1.dylib")
+    }
 
     /// Synthesize `text` → WAV bytes. Runs piper off the main thread; nil on
     /// any failure (missing setup, bad model, crash) so the route answers 503.
@@ -61,9 +75,20 @@ enum PiperTTS {
             .appendingPathComponent("macon-tts-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: out) }
 
+        let dir = (binary as NSString).deletingLastPathComponent
         let p = Process()
         p.executableURL = URL(fileURLWithPath: binary)
-        p.arguments = ["--model", voice, "--output_file", out.path]
+        var args = ["--model", voice, "--output_file", out.path]
+        // piper looks for espeak-ng-data relative to its cwd by default; point
+        // it at the copy beside the binary so it works from any working dir.
+        let espeak = dir + "/espeak-ng-data"
+        if FileManager.default.fileExists(atPath: espeak) { args += ["--espeak_data", espeak] }
+        p.arguments = args
+        // The binary links its dylibs by @rpath; make sure the loader can find
+        // the ones sitting next to it (see engineComplete).
+        var env = ProcessInfo.processInfo.environment
+        env["DYLD_LIBRARY_PATH"] = dir + (env["DYLD_LIBRARY_PATH"].map { ":\($0)" } ?? "")
+        p.environment = env
         let stdin = Pipe()
         p.standardInput = stdin
         p.standardOutput = Pipe()

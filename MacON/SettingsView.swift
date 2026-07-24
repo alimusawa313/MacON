@@ -468,7 +468,7 @@ struct SettingsView: View {
                 }
             } else if !PiperTTS.isAvailable {
                 Button { installChosenVoice() } label: {
-                    Label("Install Piper voice  (~80–130 MB)", systemImage: "arrow.down.circle.fill")
+                    Label("Install Piper voice  (~110–170 MB)", systemImage: "arrow.down.circle.fill")
                 }
                 .buttonStyle(ClaySoftButtonStyle(world: world))
                 caption("One click — downloads the Piper engine from its official "

@@ -51,11 +51,17 @@ final class PiperInstaller {
 
     #if arch(arm64)
     private static let archive = "piper_macos_aarch64.tar.gz"
+    private static let phonemizeArchive = "piper-phonemize_macos_aarch64.tar.gz"
     #else
     private static let archive = "piper_macos_x64.tar.gz"
+    private static let phonemizeArchive = "piper-phonemize_macos_x64.tar.gz"
     #endif
     private static let engineURL =
         URL(string: "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/\(archive)")!
+    // The runtime dylibs (libespeak-ng, libpiper_phonemize, libonnxruntime)
+    // ship here, NOT in the piper tarball — without them piper can't launch.
+    private static let phonemizeURL =
+        URL(string: "https://github.com/rhasspy/piper-phonemize/releases/download/2023.11.14-4/\(phonemizeArchive)")!
     private static let voicesRepo = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 
     /// A voice from the official library. `id` is the file base name piper
@@ -109,22 +115,42 @@ final class PiperInstaller {
             let dir = Self.installDir
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-            // 1. The engine bundle: piper binary + espeak-ng data + dylibs,
-            //    which all live side by side in the tarball's piper/ folder.
-            //    Skipped when a piper is already available (in-app or manual).
-            let installedBinary = dir.appendingPathComponent("piper/piper")
-            if PiperTTS.binaryPath() == nil {
+            // 1. The engine: the piper binary + espeak-ng data (piper tarball)
+            //    AND the runtime dylibs (piper-phonemize tarball) copied beside
+            //    the binary. Skipped only when a COMPLETE engine is already
+            //    here (a manual/Homebrew piper, or a good prior install).
+            let piperDir = dir.appendingPathComponent("piper", isDirectory: true)
+            let installedBinary = piperDir.appendingPathComponent("piper")
+            let engineReady = (PiperTTS.binaryPath().map { PiperTTS.engineComplete($0) }) ?? false
+            if !engineReady {
                 stage = .downloadingPiper; progress = 0
                 let tar = try await download(Self.engineURL)
                 stage = .installing
                 try await shell("/usr/bin/tar", "-xzf", tar.path, "-C", dir.path)
                 try? FileManager.default.removeItem(at: tar)
-
                 guard FileManager.default.fileExists(atPath: installedBinary.path) else {
                     throw Fail("The download didn't contain the piper binary.")
                 }
-                // tar preserves both from the archive, but belt-and-braces: the
-                // exec bit must be set and a quarantined binary won't launch.
+
+                // The dylibs the binary links against (@rpath) — different repo.
+                stage = .downloadingPiper; progress = 0
+                let libTar = try await download(Self.phonemizeURL)
+                stage = .installing
+                try await shell("/usr/bin/tar", "-xzf", libTar.path, "-C", dir.path)
+                try? FileManager.default.removeItem(at: libTar)
+                let libSrc = dir.appendingPathComponent("piper-phonemize/lib", isDirectory: true)
+                let libs = (try? FileManager.default.contentsOfDirectory(atPath: libSrc.path)) ?? []
+                for lib in libs where lib.hasSuffix(".dylib") {
+                    let dest = piperDir.appendingPathComponent(lib)
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.copyItem(at: libSrc.appendingPathComponent(lib), to: dest)
+                }
+                try? FileManager.default.removeItem(at: dir.appendingPathComponent("piper-phonemize"))
+                guard FileManager.default.fileExists(atPath: piperDir.appendingPathComponent("libespeak-ng.1.dylib").path) else {
+                    throw Fail("The runtime libraries didn't download — try again.")
+                }
+
+                // Exec bit + clear quarantine so Gatekeeper doesn't block launch.
                 try? FileManager.default.setAttributes([.posixPermissions: 0o755],
                                                        ofItemAtPath: installedBinary.path)
                 try? await shell("/usr/bin/xattr", "-dr", "com.apple.quarantine", dir.path)
