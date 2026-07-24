@@ -15,10 +15,12 @@ enum PiperTTS {
     static let binaryKey = "voice.piperPath"
     static let voiceKey = "voice.piperVoice"
 
-    /// The piper binary: the configured path, or the usual install spots.
+    /// The piper binary: the configured path, the in-app install, or the
+    /// usual manual install spots.
     static func binaryPath() -> String? {
         let configured = UserDefaults.standard.string(forKey: binaryKey) ?? ""
         let candidates = [configured,
+                          PiperInstaller.installDir.appendingPathComponent("piper/piper").path,
                           "/opt/homebrew/bin/piper",
                           "/usr/local/bin/piper",
                           NSHomeDirectory() + "/.local/bin/piper",
@@ -26,12 +28,12 @@ enum PiperTTS {
         return candidates.first { !$0.isEmpty && FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// The voice model (.onnx): the configured path, or one found next to the
-    /// binary / in ~/piper (first .onnx wins).
+    /// The voice model (.onnx): the configured path, or one found in the
+    /// in-app install / next to the binary / in ~/piper (first .onnx wins).
     static func voicePath() -> String? {
         let configured = UserDefaults.standard.string(forKey: voiceKey) ?? ""
         if !configured.isEmpty, FileManager.default.fileExists(atPath: configured) { return configured }
-        var dirs = [NSHomeDirectory() + "/piper"]
+        var dirs = [PiperInstaller.installDir.path, NSHomeDirectory() + "/piper"]
         if let bin = binaryPath() { dirs.insert((bin as NSString).deletingLastPathComponent, at: 0) }
         for dir in dirs {
             if let onnx = (try? FileManager.default.contentsOfDirectory(atPath: dir))?

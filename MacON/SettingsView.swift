@@ -30,6 +30,7 @@ struct SettingsView: View {
     @State private var customProviders: [CustomAIProvider] = []
     @AppStorage(PiperTTS.binaryKey) private var piperPath = ""
     @AppStorage(PiperTTS.voiceKey) private var piperVoice = ""
+    @State private var piper = PiperInstaller()
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
 
@@ -431,34 +432,72 @@ struct SettingsView: View {
         Section {
             caption("Voice mode on the companion talks to an AI agent that sees "
                     + "and drives this Mac. Replies are spoken with Piper — free, "
-                    + "open-source TTS that runs entirely on this Mac. Install it "
-                    + "from github.com/rhasspy/piper (binary + a voice .onnx), "
-                    + "then point these at them. Without Piper the device falls "
-                    + "back to its own system voice.")
-            HStack {
-                Text("Piper binary")
-                    .font(.system(.subheadline, design: .rounded).weight(.medium))
-                    .frame(width: 110, alignment: .leading)
-                TextField("/opt/homebrew/bin/piper (auto-detected if empty)", text: $piperPath)
-                    .textFieldStyle(.roundedBorder)
-            }
-            HStack {
-                Text("Voice model")
-                    .font(.system(.subheadline, design: .rounded).weight(.medium))
-                    .frame(width: 110, alignment: .leading)
-                TextField("~/piper/en_US-lessac-medium.onnx (auto-detected if empty)", text: $piperVoice)
-                    .textFieldStyle(.roundedBorder)
-            }
+                    + "open-source TTS that runs entirely on this Mac. Without it "
+                    + "the device falls back to its own system voice.")
+
             if PiperTTS.isAvailable {
                 Pill(text: "Piper ready — replies use the open-source voice",
                      systemImage: "waveform", tint: world.good)
+            } else if piper.busy {
+                VStack(alignment: .leading, spacing: 6) {
+                    if case .installing = piper.stage {
+                        ProgressView()
+                    } else if case .testing = piper.stage {
+                        ProgressView()
+                    } else {
+                        ProgressView(value: piper.progress)
+                    }
+                    Text(piperStageLabel)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(world.ink.opacity(0.6))
+                }
             } else {
-                Pill(text: "Piper not found — the device will use its system voice",
-                     systemImage: "waveform.slash", tint: world.warm)
+                Button { piper.install() } label: {
+                    Label("Install Piper voice  (~85 MB)", systemImage: "arrow.down.circle.fill")
+                }
+                .buttonStyle(ClaySoftButtonStyle(world: world))
+                caption("One click — downloads the Piper engine from its official "
+                        + "GitHub release and the \(PiperInstaller.voiceName) voice "
+                        + "from the official voice library, sets everything up, and "
+                        + "plays a test line. Nothing to do in Terminal.")
+            }
+            if case .failed(let why) = piper.stage {
+                Pill(text: why, systemImage: "exclamationmark.triangle.fill", tint: world.bad)
+            }
+
+            DisclosureGroup {
+                HStack {
+                    Text("Piper binary")
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .frame(width: 110, alignment: .leading)
+                    TextField("/opt/homebrew/bin/piper (auto-detected if empty)", text: $piperPath)
+                        .textFieldStyle(.roundedBorder)
+                }
+                HStack {
+                    Text("Voice model")
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .frame(width: 110, alignment: .leading)
+                    TextField("~/piper/en_US-lessac-medium.onnx (auto-detected if empty)", text: $piperVoice)
+                        .textFieldStyle(.roundedBorder)
+                }
+            } label: {
+                Text("Use my own Piper install")
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                    .foregroundStyle(world.ink.opacity(0.75))
             }
         } header: {
             WorldSectionHeader(title: "Voice mode", symbol: "waveform.circle.fill",
                                world: world, tint: world.primary)
+        }
+    }
+
+    private var piperStageLabel: String {
+        switch piper.stage {
+        case .downloadingPiper: return "Downloading the Piper engine… \(Int(piper.progress * 100))%"
+        case .installing:       return "Unpacking…"
+        case .downloadingVoice: return "Downloading the voice… \(Int(piper.progress * 100))%"
+        case .testing:          return "Testing the voice…"
+        default:                return ""
         }
     }
 
