@@ -590,6 +590,7 @@ final class CompanionManager: ObservableObject {
         tunnel.stop()
         flowScheduler.stop()
         setScreenCapture(false)
+        BrowserBridge.shared.stop()          // close the agent's Chromium, if any
         // Server going away: drop the virtual display now, not after the grace.
         virtualTeardownTask?.cancel(); virtualTeardownTask = nil
         virtualDisplay.stop()
