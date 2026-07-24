@@ -32,6 +32,7 @@ struct SettingsView: View {
     @AppStorage(PiperTTS.voiceKey) private var piperVoice = ""
     @State private var piper = PiperInstaller()
     @State private var voiceChoice = PiperInstaller.voices[0].id
+    @State private var playwright = PlaywrightInstaller()
     /// Captured on open so Cancel can put the live-applied settings back.
     @State private var snapshot: SettingsSnapshot?
 
@@ -83,7 +84,7 @@ struct SettingsView: View {
             case .appearance: appearanceSection
             case .accounts:   bitbucketSection; githubSection
             case .secrets:    secretsSection
-            case .companion:  companionSection; aiProvidersSection; aiSection; voiceSection
+            case .companion:  companionSection; aiProvidersSection; aiSection; voiceSection; browserSection
             case .notifications: notificationsSection
             case .power:      powerSection
             case .privacy:    privacyScreenSection
@@ -540,6 +541,59 @@ struct SettingsView: View {
         case .downloadingVoice: return "Downloading the voice… \(Int(piper.progress * 100))%"
         case .testing:          return "Testing the voice…"
         default:                return ""
+        }
+    }
+
+    private var browserSection: some View {
+        Section {
+            caption("Optional. When a task the agent runs leans heavily on a "
+                    + "website, MacON can drive a real Chromium with Playwright — "
+                    + "proper clicks, waiting for pages, and reading the page — "
+                    + "instead of poking at the browser through the accessibility "
+                    + "tree. It's combined with the normal Mac control, so the "
+                    + "agent still opens apps and handles dialogs. Without this, "
+                    + "the agent uses Safari through accessibility as before.")
+
+            if !PlaywrightInstaller.nodeAvailable {
+                Pill(text: "Needs Node.js — install it from nodejs.org (or `brew install node`), then reopen Settings",
+                     systemImage: "exclamationmark.triangle.fill", tint: world.warm)
+            } else if BrowserBridge.isInstalled {
+                Pill(text: "Browser control ready — the agent uses Playwright for web tasks",
+                     systemImage: "globe", tint: world.good)
+                Button(role: .destructive) { playwright.uninstall() } label: {
+                    Label("Remove browser control", systemImage: "trash")
+                }
+                .buttonStyle(ClaySoftButtonStyle(world: world))
+            } else if playwright.busy {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView()
+                    Text(playwrightStageLabel)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(world.ink.opacity(0.6))
+                }
+            } else {
+                Button { playwright.install() } label: {
+                    Label("Install browser control  (~120 MB)", systemImage: "arrow.down.circle.fill")
+                }
+                .buttonStyle(ClaySoftButtonStyle(world: world))
+                caption("Uses the Node.js already on your Mac to fetch Playwright "
+                        + "and a private Chromium. Nothing to do in Terminal.")
+            }
+            if case .failed(let why) = playwright.stage {
+                Pill(text: why, systemImage: "exclamationmark.triangle.fill", tint: world.bad)
+            }
+        } header: {
+            WorldSectionHeader(title: "Browser control", symbol: "globe",
+                               world: world, tint: world.primary)
+        }
+    }
+
+    private var playwrightStageLabel: String {
+        switch playwright.stage {
+        case .installing:        return "Installing Playwright…"
+        case .downloadingBrowser: return "Downloading Chromium (~120 MB)…"
+        case .testing:           return "Testing…"
+        default:                 return ""
         }
     }
 

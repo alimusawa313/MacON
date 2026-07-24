@@ -15,14 +15,19 @@ import Foundation
 struct AgentStep: Codable {
     var intent: String          // human-readable, shown in the step feed
     var action: String          // launch | click | doubleclick | rightclick |
-                                // type | key | scroll | wait
+                                // type | key | scroll | wait | web.goto |
+                                // web.click | web.type | web.press | web.scroll |
+                                // web.back
     var app: String?            // launch: app name
-    var target: String?         // click*: control name from the snapshot
+    var target: String?         // click*: control name; web.click: element ref/text
     var role: String?           // click*: optional role hint (AXButton…)
-    var text: String?           // type: what to type
-    var keys: String?           // key: chord, e.g. "return", "cmd+s"
+    var text: String?           // type / web.type: what to type
+    var keys: String?           // key: chord, e.g. "return", "cmd+s"; web.press: a key
     var amount: Double?         // scroll: positive scrolls down
     var seconds: Double?        // wait
+    var url: String?            // web.goto: destination
+    var ref: String?            // web.click / web.type: element ref (e1, e2…)
+    var submit: Bool?           // web.type: press Enter after
 }
 
 struct AgentPlan: Codable {
@@ -37,6 +42,7 @@ struct AgentBrainConfig {
     var model: String           // empty → provider default
     var key: String?            // cloud key (nil for ollama)
     var baseURL: String?        // custom OpenAI-compatible providers only
+    var webEnabled: Bool = false // Playwright installed → offer web.* actions
 
     var resolvedModel: String {
         if !model.isEmpty { return model }
@@ -57,7 +63,7 @@ enum AgentBrain {
         var errorDescription: String? { message }
     }
 
-    private static let system = """
+    private static let systemBase = """
     You control a Mac for the user by planning steps against its accessibility \
     tree. You are given the task and the CURRENT visible controls. Reply with \
     ONLY a JSON object, no prose, no code fences:
@@ -86,6 +92,36 @@ enum AgentBrain {
       the task is complete, reply {"complete":true} only if EVERY part of it
       (including any "then …") is actually done — otherwise return more steps.
     """
+
+    /// Appended when Playwright is installed: a real browser the plan can drive
+    /// directly, which is far more reliable than clicking a browser through the
+    /// AX tree.
+    private static let webActions = """
+
+
+    BROWSER (Playwright is available — a real Chromium window you control):
+    For ANYTHING happening inside a web page, use these instead of clicking the
+    browser through the Mac UI — they use real selectors and wait for loads:
+    - {"action":"web.goto","url":"https://…","intent":"…"}  — open a page
+    - {"action":"web.click","ref":"e12","intent":"…"}       — click element e12 from BROWSER PAGE
+      (or {"action":"web.click","target":"Sign in"} to click by visible text)
+    - {"action":"web.type","ref":"e4","text":"…","submit":true,"intent":"…"} — type into a field (submit presses Enter)
+    - {"action":"web.press","keys":"Enter","intent":"…"}    — a key on the page
+    - {"action":"web.scroll","amount":3,"intent":"…"}        — scroll the page
+    - {"action":"web.back","intent":"…"}                     — browser back
+
+    Browser rules:
+    - After each web step you're shown BROWSER PAGE: its url, title, and
+      interactive elements each with a ref (e1, e2…). Use those refs.
+    - Mix freely: use web.* for the page, and launch/click/type for the OS,
+      native apps, and system dialogs (Playwright can't touch those).
+    - Start web work with web.goto; don't try to drive Safari via the AX tree
+      when the browser is available.
+    """
+
+    private static func systemPrompt(web: Bool) -> String {
+        web ? systemBase + webActions : systemBase
+    }
 
     /// Plan a fresh task against the current snapshot.
     static func plan(task: String, snapshot: String, config: AgentBrainConfig) async throws -> AgentPlan {
@@ -140,14 +176,14 @@ enum AgentBrain {
         CURRENT UI (fresh):
         \(snapshot)
         """
-        let raw = try await complete(system: system, prompt: prompt, config: config)
+        let raw = try await complete(system: systemPrompt(web: config.webEnabled), prompt: prompt, config: config)
         // A bare {"complete":true} has no steps — treat parse failure as "more
         // work unknown" rather than silently finishing.
         return parsePlan(raw) ?? AgentPlan(steps: [], note: raw, complete: nil)
     }
 
     private static func requestPlan(prompt: String, config: AgentBrainConfig) async throws -> AgentPlan {
-        let raw = try await complete(system: system, prompt: prompt, config: config)
+        let raw = try await complete(system: systemPrompt(web: config.webEnabled), prompt: prompt, config: config)
         guard let plan = parsePlan(raw) else {
             throw Fail("The model didn't return a usable plan. Raw reply: \(raw.prefix(200))")
         }

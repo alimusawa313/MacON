@@ -37,6 +37,8 @@ final class AgentRunner {
         var stopped = false
         var task: Task<Void, Never>?
         var pending: (seq: Int, cont: CheckedContinuation<Bool, Never>)?
+        var browserActive = false                        // a web page has been opened
+        var lastPage: BrowserBridge.PageSnapshot?        // its latest snapshot (for the planner)
     }
     private var runs: [String: Run] = [:]
 
@@ -61,7 +63,8 @@ final class AgentRunner {
             if (key ?? "").isEmpty { key = Self.nonEmpty(CustomProviders.key(for: provider)) }
             if model.isEmpty { model = custom.models.first ?? "" }
         }
-        let config = AgentBrainConfig(provider: provider, model: model, key: key, baseURL: baseURL)
+        let config = AgentBrainConfig(provider: provider, model: model, key: key, baseURL: baseURL,
+                                      webEnabled: BrowserBridge.isInstalled)
         let supervised = (req.mode ?? "supervised") == "supervised"
         let maxSteps = min(max(req.maxSteps ?? 40, 1), 80)
 
@@ -127,7 +130,7 @@ final class AgentRunner {
         var plan: AgentPlan
         do {
             plan = try await AgentBrain.plan(task: task,
-                                             snapshot: AXSnapshotter.promptText(app: snap.app, window: snap.window, nodes: snap.nodes),
+                                             snapshot: planningText(snap, run: run),
                                              config: config)
         } catch {
             emit(run, kind: "error", text: error.localizedDescription); return
@@ -169,7 +172,7 @@ final class AgentRunner {
                 do {
                     plan = try await AgentBrain.replan(
                         task: task,
-                        snapshot: AXSnapshotter.promptText(app: snap.app, window: snap.window, nodes: snap.nodes),
+                        snapshot: planningText(snap, run: run),
                         done: done, problem: "Control “\(step.target ?? "")” not found.", config: config)
                 } catch {
                     emit(run, kind: "error", text: error.localizedDescription); return
@@ -191,7 +194,7 @@ final class AgentRunner {
                 if !ok { emit(run, kind: "action", text: "Skipped: \(step.intent)", status: "skipped"); done.append(step.intent); index += 1; continue }
             }
 
-            let outcome = perform(step, resolved: resolved)
+            let outcome = await perform(step, resolved: resolved, run: run)
             emit(run, kind: "action",
                  text: outcome.ok ? step.intent : "\(step.intent) — \(outcome.problem ?? "failed")",
                  status: outcome.ok ? "ok" : "fail", step: index)
@@ -203,7 +206,7 @@ final class AgentRunner {
                     snap = AXSnapshotter.snapshot()
                     plan = try await AgentBrain.replan(
                         task: task,
-                        snapshot: AXSnapshotter.promptText(app: snap.app, window: snap.window, nodes: snap.nodes),
+                        snapshot: planningText(snap, run: run),
                         done: done, problem: outcome.problem ?? "A step failed.", config: config)
                 } catch {
                     emit(run, kind: "error", text: error.localizedDescription); return
@@ -235,7 +238,7 @@ final class AgentRunner {
         do {
             assessment = try await AgentBrain.assess(
                 task: task,
-                snapshot: AXSnapshotter.promptText(app: snap.app, window: snap.window, nodes: snap.nodes),
+                snapshot: planningText(snap, run: run),
                 done: done, config: config)
         } catch {
             emit(run, kind: "error", text: error.localizedDescription); return
@@ -278,7 +281,67 @@ final class AgentRunner {
         return nodes.map { ($0, score($0)) }.filter { $0.1 >= 0 }.max { $0.1 < $1.1 }?.0
     }
 
-    private func perform(_ step: AgentStep, resolved: AXNode?) -> (ok: Bool, problem: String?) {
+    /// The planning snapshot: the Mac's AX tree, plus — once the agent has
+    /// opened a page — the live browser page (url, title, ref'd elements, text)
+    /// so the model can drive it with web.* actions.
+    private func planningText(_ snap: (app: String, window: String, nodes: [AXNode]), run: Run) -> String {
+        var s = AXSnapshotter.promptText(app: snap.app, window: snap.window, nodes: snap.nodes)
+        guard let page = run.lastPage else { return s }
+        s += "\n\nBROWSER PAGE (drive with web.* actions; the ref ids are click/type targets):\n"
+        s += "URL: \(page.url)\nTitle: \(page.title)\n"
+        if !page.elements.isEmpty {
+            s += "Elements:\n"
+            s += page.elements.map { "  [\($0.ref)] \($0.role) \"\($0.name)\"" }.joined(separator: "\n")
+            s += "\n"
+        }
+        let text = page.text.prefix(1500)
+        if !text.isEmpty { s += "Visible text:\n\(text)\n" }
+        return s
+    }
+
+    /// A web.click/web.type target can be a bare ref (e12) in either `ref` or
+    /// `target`; anything else in `target` is visible text to match.
+    private func webTarget(_ step: AgentStep) -> (ref: String?, text: String?) {
+        if let ref = step.ref, !ref.isEmpty { return (ref, nil) }
+        guard let t = step.target?.trimmingCharacters(in: .whitespaces), !t.isEmpty else { return (nil, nil) }
+        let isRef = t.range(of: "^e[0-9]+$", options: .regularExpression) != nil
+        return isRef ? (t, nil) : (nil, t)
+    }
+
+    private func perform(_ step: AgentStep, resolved: AXNode?, run: Run) async -> (ok: Bool, problem: String?) {
+        // Browser actions run through Playwright (see BrowserBridge).
+        if step.action.hasPrefix("web.") {
+            do {
+                let page: BrowserBridge.PageSnapshot
+                switch step.action {
+                case "web.goto":
+                    guard let url = (step.url ?? step.target), !url.isEmpty else { return (false, "no url") }
+                    page = try await BrowserBridge.shared.goto(url)
+                case "web.click":
+                    let t = webTarget(step)
+                    guard t.ref != nil || t.text != nil else { return (false, "nothing to click") }
+                    page = try await BrowserBridge.shared.click(ref: t.ref, text: t.text)
+                case "web.type":
+                    guard let text = step.text else { return (false, "nothing to type") }
+                    page = try await BrowserBridge.shared.type(ref: webTarget(step).ref, text: text,
+                                                               submit: step.submit ?? false)
+                case "web.press":
+                    page = try await BrowserBridge.shared.press(step.keys ?? "Enter")
+                case "web.scroll":
+                    page = try await BrowserBridge.shared.scroll(step.amount ?? 3)
+                case "web.back":
+                    page = try await BrowserBridge.shared.back()
+                default:
+                    return (false, "unknown web action “\(step.action)”")
+                }
+                run.browserActive = true
+                run.lastPage = page
+                return (true, nil)
+            } catch {
+                return (false, error.localizedDescription)
+            }
+        }
+
         switch step.action {
         case "launch":
             guard let app = step.app, launch(app: app) else {
@@ -337,6 +400,7 @@ final class AgentRunner {
              "rightclick":             ms = 450
         case "key":                    ms = 350
         case "type":                   ms = 150
+        case let a where a.hasPrefix("web."): ms = 0   // the bridge already waited for load
         default:                       ms = 300
         }
         try? await Task.sleep(nanoseconds: min(ms, 8_000) * 1_000_000)
